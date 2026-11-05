@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { openPool } from "./connection-budget.js";
 import { afterAll, beforeAll, beforeEach } from "vitest";
 import { PostgresDatabase } from "../../src/infrastructure/postgres/database.js";
 import { useBackend } from "./deps.js";
@@ -23,7 +24,7 @@ export function usePostgresBackend(): PostgresBackend {
   beforeAll(async () => {
     db = await createTestDatabase();
     await asAdmin(db, seedWorld);
-    pgdb = new PostgresDatabase({ url: db.appUrl, poolMax: 20 });
+    pgdb = openPool({ url: db.appUrl, poolMax: 20 });
     useBackend({
       create: () => pgdb,
       addTimeOff: (_database, staffId, start, end) =>

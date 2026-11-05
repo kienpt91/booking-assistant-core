@@ -30,6 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
+      # The service runs with PostgreSQL's default max_connections (100, 3 reserved): the Actions service options cannot add server
+      # arguments, so the suite fits the default instead (test/support/connection-budget.ts: one file at a time, bounded pools, and a
+      # monitor that fails the run when the server allows fewer connections than the budget or the measured peak exceeds it; the peak
+      # is printed in the log as "postgres connections: peak N of M usable").
         # postgres 16.14 (image built 2026-08-05), pinned by digest. Trust auth is safe here: the service is only reachable from this runner.
         image: postgres@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
         env:

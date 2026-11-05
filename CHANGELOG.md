@@ -2,6 +2,8 @@
 
 ## Unreleased (review of 2026-11)
 
+- Tests: the PostgreSQL suite fits a default server (100 connections): one file at a time, pools opened through a counted `openPool`, the negative control of the concurrency proof in its own file, and a monitor that checks the server's limit before the run and the peak after it. (The CI service container failed with "remaining connection slots are reserved" because the local script ran the server with 200.)
+
 - Webhook: the per-address limit is applied after the signature is verified; failed signatures never block a valid one; limits, body size, tolerance and a trusted-proxy depth are configurable from the environment.
 - Reply and conversation text is encrypted with a second key; every encrypted value is bound to its table, column, salon and row id; keys are rings with ids, parsed strictly; the phone hash is separated by salon. (Format `v2`; the database layout of `outbox_messages` and `conversation_turns` changed in migration 0005 before any release.)
 - Appointment notes are masked at write time; `model` and `relay` URLs must be https; the model response is size-capped; numbers with a `(0)` trunk digit are refused.

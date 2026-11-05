@@ -113,6 +113,8 @@ scripts/integration.sh                   # every test incl. PostgreSQL, against 
 scripts/demo.sh | tee docs/demo-output.txt
 ```
 
+The PostgreSQL tests have a connection budget (70 connections, `test/support/connection-budget.ts`) and run against a server with PostgreSQL's default `max_connections` of 100, as the CI service does: one test file at a time, every pool opened through `openPool`, the 50 racing clients through one bounded pool of 50. A monitor (`test/support/connection-monitor.ts`) refuses to start when the server allows fewer connections than the budget and fails the run when the measured peak is over it; the peak is printed at the end ("postgres connections: peak 56 of 97 usable"). `PG_MAX_CONNECTIONS=60 scripts/integration.sh` shows the failure.
+
 The project is mounted read-only into a container that runs as you, drops every capability, has no network after the install and is limited to 4 CPUs and 6 GiB.
 
 ## How it fits together

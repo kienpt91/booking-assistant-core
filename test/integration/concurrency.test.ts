@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { openPool } from "../support/connection-budget.js";
 import { outboundRow } from "../support/messages.js";
 import { book, cancelAppointment, confirmHold, holdSlot, listMyAppointments, moveAppointment } from "../../src/application/booking.js";
 import { resolveClient } from "../../src/application/clients.js";
@@ -35,8 +36,6 @@ const codes = (results: readonly Outcome<unknown>[]): Record<string, number> => 
 describeDb("concurrency: what the database guarantees when requests race", () => {
   let db: TestDatabase;
   let pg: PostgresDatabase;
-  let control: TestDatabase;
-  let controlPg: PostgresDatabase;
 
   const truncate = (target: TestDatabase) =>
     asAdmin(target, async (c) => {
@@ -49,26 +48,16 @@ describeDb("concurrency: what the database guarantees when requests race", () =>
   beforeAll(async () => {
     db = await createTestDatabase();
     await asAdmin(db, seedWorld);
-    pg = new PostgresDatabase({ url: db.appUrl, poolMax: 60 });
+    pg = openPool({ url: db.appUrl, poolMax: ATTEMPTS });
     useBackend({ create: () => pg, addTimeOff: async () => undefined });
-    // a second database in which the exclusion constraints were dropped: the negative control
-    control = await createTestDatabase();
-    await asAdmin(control, async (c) => {
-      await seedWorld(c);
-      await c.query("ALTER TABLE appointments DROP CONSTRAINT appointments_staff_no_overlap, DROP CONSTRAINT appointments_client_no_overlap");
-    });
-    controlPg = new PostgresDatabase({ url: control.appUrl, poolMax: 60 });
   });
   beforeEach(async () => {
     await truncate(db);
-    await truncate(control);
   });
   afterAll(async () => {
     useBackend(undefined);
     await pg.close();
-    await controlPg.close();
     await db.drop();
-    await control.drop();
   });
 
   describe("booking one slot", () => {
@@ -90,7 +79,7 @@ describeDb("concurrency: what the database guarantees when requests race", () =>
     });
 
     it("with a pool of five connections the attempts queue and the result is the same", async () => {
-      const small = new PostgresDatabase({ url: db.appUrl, poolMax: 5 });
+      const small = openPool({ url: db.appUrl, poolMax: 5 });
       try {
         const world = testWorld();
         const clients = await clientsOf(world.deps, ATTEMPTS);
@@ -113,16 +102,6 @@ describeDb("concurrency: what the database guarantees when requests race", () =>
       for (let i = 1; i < winners.length; i++) expect(winners[i]?.starts_at.getTime()).toBeGreaterThanOrEqual(winners[i - 1]?.blocked_until.getTime());
       expect(winners.length).toBeGreaterThan(1);
       expect(winners.length).toBeLessThan(20);
-    });
-
-    it("the control: without the exclusion constraints the same race books the slot many times, so the test above can fail", async () => {
-      const world = testWorld();
-      const controlDeps: Deps = { ...world.deps, db: controlPg };
-      const clients = await clientsOf(controlDeps, ATTEMPTS);
-      const raced: Deps = { ...controlDeps, db: new BarrierDatabase(controlPg, ATTEMPTS) };
-      const results = await Promise.all(clients.map((c) => book(raced, c, { serviceId: cut, staffId: staff1, startsAt: SLOT })));
-      expect(codes(results).ok).toBe(ATTEMPTS);
-      expect(await rowsAt(control, "booked")).toBe(ATTEMPTS);
     });
 
     it("one client pressing the button twenty times: one booking, and with an idempotency key every press gets the same answer", async () => {

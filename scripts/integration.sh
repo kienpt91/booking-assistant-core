@@ -7,6 +7,9 @@
 # network namespace, so the server is reached at 127.0.0.1 and nothing else is reachable. The superuser password is
 # generated here, written to a mode-600 file under out/ (ignored by git) and removed with the containers on exit.
 #
+# The server runs with PostgreSQL's DEFAULT max_connections (100, of which 3 are reserved for superusers), the same as the service
+# container of the CI job, so a suite that needs more connections fails here the way it fails there. PG_MAX_CONNECTIONS overrides it.
+#
 # usage: scripts/integration.sh [vitest arguments...]      (runs: vitest run --coverage ARGS)
 set -eu
 cd "$(dirname "$0")/.."
@@ -28,7 +31,7 @@ POSTGRES_PASSWORD=$(cat out/.it-secret) docker run -d --name "$pg" --network non
   --user 999:999 --read-only \
   --tmpfs /var/lib/postgresql/data:rw,uid=999,gid=999,mode=0700 \
   --tmpfs /var/run/postgresql:rw,uid=999,gid=999,mode=0755 --tmpfs /tmp:rw,mode=1777 \
-  -e POSTGRES_PASSWORD "$image" -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=200 >/dev/null
+  -e POSTGRES_PASSWORD "$image" -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=${PG_MAX_CONNECTIONS:-100} >/dev/null
 
 i=0
 until docker exec "$pg" pg_isready -q -h 127.0.0.1 -U postgres; do

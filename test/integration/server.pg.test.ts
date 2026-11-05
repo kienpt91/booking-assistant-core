@@ -1,4 +1,5 @@
 import http from "node:http";
+import { declarePool } from "../support/connection-budget.js";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -51,6 +52,7 @@ describe("the real server, wired from configuration, over PostgreSQL", () => {
         res.writeHead(202).end();
       });
     });
+    const releasePool = declarePool("the server's pool", 10);
     const keys = throwawayKeys();
     const lines: string[] = [];
     const running = await startServer(
@@ -74,6 +76,7 @@ describe("the real server, wired from configuration, over PostgreSQL", () => {
       expect(lines.join("\n")).not.toMatch(/7700900555|book me/);
     } finally {
       await running.stop();
+      releasePool();
       model.server.close();
       relay.server.close();
     }

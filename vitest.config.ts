@@ -16,6 +16,9 @@ export default defineConfig({
     hookTimeout: 120_000,
     // every database test file creates and drops its own database, one file at a time
     fileParallelism: !withDatabase,
+    // the PostgreSQL run has a connection budget (test/support/connection-budget.ts): one file at a time, one worker, and a monitor
+    // that checks the server's limit before the run and the measured peak after it
+    ...(withDatabase ? { maxWorkers: 1, globalSetup: ["test/support/connection-monitor.ts"] } : {}),
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],

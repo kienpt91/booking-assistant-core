@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { openPool } from "../support/connection-budget.js";
 import { runHostileSuite } from "../../src/demo/hostile.js";
 import { PostgresDatabase } from "../../src/infrastructure/postgres/database.js";
 import { useBackend } from "../support/deps.js";
@@ -12,7 +13,7 @@ describe("the hostile conversation suite, on PostgreSQL with the real roles and 
   beforeAll(async () => {
     db = await createTestDatabase();
     await asAdmin(db, seedWorld);
-    pg = new PostgresDatabase({ url: db.appUrl, poolMax: 10 });
+    pg = openPool({ url: db.appUrl, poolMax: 10 });
     useBackend({ create: () => pg, addTimeOff: async () => undefined });
   });
   afterAll(async () => {
