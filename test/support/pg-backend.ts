@@ -8,6 +8,8 @@ import { seedWorld, W } from "./seed.js";
 export interface PostgresBackend {
   /** runs statements as the superuser of the test database: seeding, and looking at what the application roles cannot */
   admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T>;
+  /** connection string of the application's login role on the test database */
+  readonly appUrl: string;
 }
 
 /**
@@ -43,5 +45,10 @@ export function usePostgresBackend(): PostgresBackend {
     await db.drop();
   });
 
-  return { admin: (fn) => asAdmin(db, fn) };
+  return {
+    admin: (fn) => asAdmin(db, fn),
+    get appUrl() {
+      return db.appUrl;
+    },
+  };
 }

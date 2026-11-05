@@ -49,4 +49,5 @@ export { W as SAMPLE_IDS } from "../infrastructure/postgres/sample-data.js";
 export { ManualClock, uuidGenerator } from "../infrastructure/system.js";
 export { createWebhookServer } from "../infrastructure/http/server.js";
 export { signBody } from "../infrastructure/http/signature.js";
-export { readServeConfig, startServer, type Running, type ServeConfig } from "./serve.js";
+export { readServeConfig, type ServeConfig } from "./config.js";
+export { startServer, type Running } from "./serve.js";
