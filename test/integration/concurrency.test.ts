@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { outboundRow } from "../support/messages.js";
 import { book, cancelAppointment, confirmHold, holdSlot, listMyAppointments, moveAppointment } from "../../src/application/booking.js";
 import { resolveClient } from "../../src/application/clients.js";
 import { dispatchOutbox } from "../../src/application/messaging.js";
@@ -259,10 +260,10 @@ describeDb("concurrency: what the database guarantees when requests race", () =>
       const claim = (now: number) => world.deps.db.transaction(system, (tx) => tx.inbox.claim("chat", "wamid-1", now, 60_000));
       const first = await Promise.all(Array.from({ length: 30 }, () => claim(1_000_000)));
       expect(first.filter(Boolean)).toHaveLength(1);
-      expect(await claim(1_030_000)).toBe(false);
-      expect(await claim(1_060_000)).toBe(true); // the lease ended: a crashed worker's message is taken over
-      await world.deps.db.transaction(system, (tx) => tx.inbox.complete("chat", "wamid-1", 1_061_000));
-      expect(await claim(9_000_000)).toBe(false); // done stays done
+      expect(await claim(1_030_000)).toBe(0);
+      expect(await claim(1_060_000)).toBe(2); // the lease ended: a crashed worker's message is taken over
+      await world.deps.db.transaction(system, (tx) => tx.inbox.complete("chat", "wamid-1", 2, 1_061_000));
+      expect(await claim(9_000_000)).toBe(0); // done stays done
     });
 
     it("five dispatchers at once send each of forty queued messages exactly once", async () => {
@@ -270,7 +271,7 @@ describeDb("concurrency: what the database guarantees when requests race", () =>
       const me = await newClient(world.deps, 1);
       await world.deps.db.transaction(system, async (tx) => {
         for (let i = 0; i < 40; i++) {
-          await tx.outbox.enqueue({ id: `e1000000-0000-4000-8000-${String(i).padStart(12, "0")}`, clientId: me.clientId, dedupeKey: `k${i}`, recipientEnc: world.deps.cipher.encrypt("+447700900001"), body: `message ${i}`, now: world.clock.now() });
+          await tx.outbox.enqueue(outboundRow(world.deps, salonA, { id: `e1000000-0000-4000-8000-${String(i).padStart(12, "0")}`, clientId: me.clientId, dedupeKey: `k${i}`, to: "+447700900001", text: `message ${i}`, now: world.clock.now() }));
         }
       });
       const channel = new FakeChannel();

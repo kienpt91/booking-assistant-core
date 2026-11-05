@@ -126,7 +126,7 @@ interface OutboxRow {
   clientId: ClientId;
   dedupeKey: string;
   recipientEnc: string;
-  body: string;
+  bodyEnc: string;
   status: "pending" | "sent" | "dead";
   attempts: number;
   nextAttemptAt: Instant;
@@ -136,10 +136,11 @@ interface OutboxRow {
 }
 type AuditRow = AuditEntry & { salonId: SalonId };
 interface TurnRow {
+  id: string;
   salonId: SalonId;
   clientId: ClientId;
   role: ConversationTurn["role"];
-  body: string;
+  bodyEnc: string;
   createdAt: Instant;
 }
 
@@ -361,6 +362,10 @@ export class MemoryDatabase implements Database {
         const row = clientRow(id);
         return row ? { id: row.id, status: row.status, createdAt: row.createdAt } : undefined;
       },
+      async lockActive(id) {
+        requireSystem("lockActive");
+        return clientRow(id)?.status === "active";
+      },
       async getPii(id): Promise<ClientPii | undefined> {
         const row = clientRow(id);
         return row?.phoneEnc ? { phoneEnc: row.phoneEnc, nameEnc: row.nameEnc } : undefined;
@@ -425,22 +430,22 @@ export class MemoryDatabase implements Database {
         const row = db.state.inbox.find((r) => r.salonId === salonId && r.channel === channel && r.messageId === messageId);
         if (!row) {
           db.state.inbox.push({ salonId, channel, messageId, status: "processing", attempts: 1, leaseUntil: now + leaseMs, receivedAt: now });
-          return true;
+          return 1;
         }
         if (row.status === "processing" && row.leaseUntil <= now) {
           Object.assign(row, { attempts: row.attempts + 1, leaseUntil: now + leaseMs });
-          return true;
+          return row.attempts;
         }
-        return false;
+        return 0;
       },
-      async complete(channel, messageId) {
+      async complete(channel, messageId, attempt) {
         requireSystem("inbox complete");
-        const row = db.state.inbox.find((r) => r.salonId === salonId && r.channel === channel && r.messageId === messageId);
+        const row = db.state.inbox.find((r) => r.salonId === salonId && r.channel === channel && r.messageId === messageId && r.attempts === attempt);
         if (row) row.status = "done";
       },
-      async release(channel, messageId, now) {
+      async release(channel, messageId, attempt, now) {
         requireSystem("inbox release");
-        const row = db.state.inbox.find((r) => r.salonId === salonId && r.channel === channel && r.messageId === messageId && r.status === "processing");
+        const row = db.state.inbox.find((r) => r.salonId === salonId && r.channel === channel && r.messageId === messageId && r.attempts === attempt && r.status === "processing");
         if (row) row.leaseUntil = now;
       },
     };
@@ -449,7 +454,7 @@ export class MemoryDatabase implements Database {
       async enqueue(m: NewOutbound) {
         requireSystem("outbox enqueue");
         if (db.state.outbox.some((r) => r.salonId === salonId && r.dedupeKey === m.dedupeKey)) return false;
-        db.state.outbox.push({ id: m.id, salonId, clientId: m.clientId, dedupeKey: m.dedupeKey, recipientEnc: m.recipientEnc, body: m.body, status: "pending", attempts: 0, nextAttemptAt: m.now, lockedUntil: null, createdAt: m.now, sentAt: null });
+        db.state.outbox.push({ id: m.id, salonId, clientId: m.clientId, dedupeKey: m.dedupeKey, recipientEnc: m.recipientEnc, bodyEnc: m.bodyEnc, status: "pending", attempts: 0, nextAttemptAt: m.now, lockedUntil: null, createdAt: m.now, sentAt: null });
         return true;
       },
       async claimDue(now, limit, leaseMs): Promise<DueOutbound[]> {
@@ -459,7 +464,7 @@ export class MemoryDatabase implements Database {
           .sort((x, y) => x.nextAttemptAt - y.nextAttemptAt)
           .slice(0, limit);
         for (const r of due) Object.assign(r, { attempts: r.attempts + 1, lockedUntil: now + leaseMs });
-        return due.map((r) => ({ id: r.id, clientId: r.clientId, recipientEnc: r.recipientEnc, body: r.body, attempts: r.attempts }));
+        return due.map((r) => ({ id: r.id, clientId: r.clientId, recipientEnc: r.recipientEnc, bodyEnc: r.bodyEnc, attempts: r.attempts }));
       },
       async markSent(id, now) {
         requireSystem("outbox markSent");
@@ -512,11 +517,11 @@ export class MemoryDatabase implements Database {
         return db.state.conversation
           .filter((t) => own({ salonId: t.salonId, clientId: t.clientId }))
           .slice(-limit)
-          .map((t) => ({ role: t.role, body: t.body }));
+          .map((t) => ({ id: t.id, role: t.role, bodyEnc: t.bodyEnc }));
       },
-      async append(clientId, role, body, now) {
+      async append(turn) {
         requireSystem("conversation append");
-        db.state.conversation.push({ salonId, clientId, role, body, createdAt: now });
+        db.state.conversation.push({ id: turn.id, salonId, clientId: turn.clientId, role: turn.role, bodyEnc: turn.bodyEnc, createdAt: turn.now });
       },
       async trim(clientId, keep) {
         requireSystem("conversation trim");

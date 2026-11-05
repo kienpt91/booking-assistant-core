@@ -2,6 +2,7 @@ import { systemOf, type ClientActor, type StaffActor, type SystemActor } from ".
 import { asId, type ClientId, type SalonId } from "../domain/ids.js";
 import type { E164 } from "../domain/phone.js";
 import { sanitizeUntrusted } from "../domain/untrusted-text.js";
+import { aad } from "./aad.js";
 import { refuse, succeed, type Outcome } from "./outcome.js";
 import type { Deps } from "./ports.js";
 
@@ -18,18 +19,19 @@ const MAX_NAME = 60;
  * The first name seen is kept: a later message cannot rename a client.
  */
 export async function resolveClient(deps: Deps, salonId: SalonId, phone: E164, displayName: string | undefined): Promise<ResolvedClient> {
-  const phoneKey = deps.hasher.phoneKey(phone);
+  const phoneKey = deps.hasher.phoneKey(salonId, phone);
   const name = displayName === undefined ? "" : sanitizeUntrusted(displayName, MAX_NAME).text;
   const now = deps.clock.now();
   const system: SystemActor = { kind: "system", salonId };
+  const newId = asId<"ClientId">(deps.ids.next());
   const found = await deps.db.transaction(system, async (tx) => {
     const existing = await tx.clients.findByPhoneKey(phoneKey);
     if (existing) return { id: existing, created: false };
     return tx.clients.upsertByPhoneKey({
-      id: asId<"ClientId">(deps.ids.next()),
+      id: newId,
       phoneKey,
-      phoneEnc: deps.cipher.encrypt(phone),
-      nameEnc: name === "" ? null : deps.cipher.encrypt(name),
+      phoneEnc: deps.cipher.encrypt(phone, aad.phone(salonId, newId)),
+      nameEnc: name === "" ? null : deps.cipher.encrypt(name, aad.name(salonId, newId)),
       now,
     });
   });
@@ -39,7 +41,7 @@ export async function resolveClient(deps: Deps, salonId: SalonId, phone: E164, d
 /** The client's name for a greeting, or undefined. Decrypted on demand, never stored in the clear. */
 export async function clientDisplayName(deps: Deps, actor: ClientActor): Promise<string | undefined> {
   const pii = await deps.db.transaction(actor, (tx) => tx.clients.getPii(actor.clientId));
-  return pii?.nameEnc ? deps.cipher.decrypt(pii.nameEnc) : undefined;
+  return pii?.nameEnc ? deps.cipher.decrypt(pii.nameEnc, aad.name(actor.salonId, actor.clientId)) : undefined;
 }
 
 export interface ErasureReport {
@@ -75,6 +77,6 @@ export async function eraseClient(deps: Deps, actor: StaffActor | SystemActor, c
 
 /** Erasure by phone number, for an operator who got the request from the person ("delete my data"). */
 export async function eraseClientByPhone(deps: Deps, actor: StaffActor | SystemActor, phone: E164): Promise<Outcome<ErasureReport>> {
-  const id = await deps.db.transaction(systemOf(actor), (tx) => tx.clients.findByPhoneKey(deps.hasher.phoneKey(phone)));
+  const id = await deps.db.transaction(systemOf(actor), (tx) => tx.clients.findByPhoneKey(deps.hasher.phoneKey(actor.salonId, phone)));
   return id ? eraseClient(deps, actor, id) : refuse("not_found");
 }

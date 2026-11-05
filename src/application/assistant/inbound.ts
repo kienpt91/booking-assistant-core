@@ -4,6 +4,7 @@ import { normalizePhone } from "../../domain/phone.js";
 import { MINUTE } from "../../domain/time/instant.js";
 import { detectLanguage, injectionFlags, matchConfirmation, sanitizeUntrusted, type Language } from "../../domain/untrusted-text.js";
 import { clientDisplayName, resolveClient } from "../clients.js";
+import { aad } from "../aad.js";
 import type { Deps } from "../ports.js";
 import { confirmPending, dropPending, settlePending } from "./confirmation.js";
 import { DEFAULT_SETTINGS, record, type AssistantSettings, type ConversationContext } from "./context.js";
@@ -47,7 +48,7 @@ export function createRuntime(model: AssistantModel, over: Partial<Omit<Assistan
   };
 }
 
-export type ReceiveStatus = "processed" | "duplicate" | "invalid" | "unknown_recipient" | "rate_limited";
+export type ReceiveStatus = "processed" | "duplicate" | "invalid" | "unknown_recipient" | "rate_limited" | "erased" | "abandoned";
 
 export interface ReceiveResult {
   readonly status: ReceiveStatus;
@@ -58,6 +59,8 @@ export const MAX_CLIENT_TEXT = 1_000;
 /** how long a worker owns a message before the channel's next delivery may take it over */
 export const LEASE_MS = 2 * MINUTE;
 const KEEP_TURNS = 10;
+/** a message whose processing failed this many times is given up on: the sender gets a success and stops retrying */
+export const MAX_ATTEMPTS = 5;
 
 const CHANNEL = /^[a-z0-9_-]{1,32}$/;
 const PRINTABLE = /^[\x21-\x7e]+$/;
@@ -80,7 +83,13 @@ export async function receiveMessage(deps: Deps, runtime: AssistantRuntime, mess
 
   const system = { kind: "system", salonId } as const;
   const now = deps.clock.now();
-  if (!(await deps.db.transaction(system, (tx) => tx.inbox.claim(message.channel, message.messageId, now, LEASE_MS)))) return { status: "duplicate" };
+  const attempt = await deps.db.transaction(system, (tx) => tx.inbox.claim(message.channel, message.messageId, now, LEASE_MS));
+  if (attempt === 0) return { status: "duplicate" };
+  if (attempt > MAX_ATTEMPTS) {
+    deps.logger.warn("inbound.abandoned", { messageId: message.messageId, attempts: attempt });
+    await deps.db.transaction(system, (tx) => tx.inbox.complete(message.channel, message.messageId, attempt, deps.clock.now()));
+    return { status: "abandoned" };
+  }
 
   try {
     const { actor, created } = await resolveClient(deps, salonId, phone, message.senderName);
@@ -90,24 +99,43 @@ export async function receiveMessage(deps: Deps, runtime: AssistantRuntime, mess
       await deps.db.transaction(actor, (tx) =>
         tx.audit.append({ id: deps.ids.next(), clientId: actor.clientId, occurredAt: now, messageId: message.messageId, step: 0, event: "rate_limited", tool: null, decision: null, reasons: ["messages_per_minute"], args: null, outcome: null }),
       );
-      await deps.db.transaction(system, (tx) => tx.inbox.complete(message.channel, message.messageId, deps.clock.now()));
+      await deps.db.transaction(system, (tx) => tx.inbox.complete(message.channel, message.messageId, attempt, deps.clock.now()));
       return { status: "rate_limited" };
     }
 
     const { reply, heard, afterCommit } = await converse(deps, runtime, actor, message);
-    await deps.db.transaction(system, async (tx) => {
-      await tx.outbox.enqueue({ id: deps.ids.next(), clientId: actor.clientId, dedupeKey: `${message.channel}:${message.messageId}:0`, recipientEnc: deps.cipher.encrypt(phone), body: reply, now: deps.clock.now() });
-      await tx.conversation.append(actor.clientId, "client", redactText(heard).slice(0, 500), now);
-      await tx.conversation.append(actor.clientId, "assistant", redactText(reply).slice(0, 1_500), deps.clock.now());
+    const stored = await deps.db.transaction(system, async (tx) => {
+      // an erasure that committed while this message was being answered wins: nothing may be written for an erased client
+      if (!(await tx.clients.lockActive(actor.clientId))) {
+        await tx.inbox.complete(message.channel, message.messageId, attempt, deps.clock.now());
+        return false;
+      }
+      const outboxId = deps.ids.next();
+      await tx.outbox.enqueue({
+        id: outboxId,
+        clientId: actor.clientId,
+        dedupeKey: `${message.channel}:${message.messageId}:0`,
+        recipientEnc: deps.cipher.encrypt(phone, aad.recipient(salonId, outboxId)),
+        bodyEnc: deps.messageCipher.encrypt(reply, aad.outboxBody(salonId, outboxId)),
+        now: deps.clock.now(),
+      });
+      const turn = (role: "client" | "assistant", text: string, at: number) => {
+        const id = deps.ids.next();
+        return { id, clientId: actor.clientId, role, bodyEnc: deps.messageCipher.encrypt(text, aad.turn(salonId, id)), now: at };
+      };
+      await tx.conversation.append(turn("client", redactText(heard).slice(0, 500), now));
+      await tx.conversation.append(turn("assistant", redactText(reply).slice(0, 1_500), deps.clock.now()));
       await tx.conversation.trim(actor.clientId, KEEP_TURNS);
-      await tx.inbox.complete(message.channel, message.messageId, deps.clock.now());
+      await tx.inbox.complete(message.channel, message.messageId, attempt, deps.clock.now());
+      return true;
     });
+    if (!stored) return { status: "erased" };
     // the proposal is marked as used only now that its answer is stored (see confirmPending); if this fails the
     // reply is already safe and the proposal simply expires, where carrying it out again would replay the same answer
     await afterCommit?.().catch(() => deps.logger.warn("inbound.settle_failed", { messageId: message.messageId }));
     return { status: "processed" };
   } catch (error) {
-    await deps.db.transaction(system, (tx) => tx.inbox.release(message.channel, message.messageId, deps.clock.now())).catch(() => undefined);
+    await deps.db.transaction(system, (tx) => tx.inbox.release(message.channel, message.messageId, attempt, deps.clock.now())).catch(() => undefined);
     throw error;
   }
 }
@@ -161,7 +189,8 @@ async function converse(deps: Deps, runtime: AssistantRuntime, client: ClientAct
     // anything else is a new request: it replaces the proposal instead of confirming it
     await dropPending(ctx, pending, "superseded");
   }
-  const history = await deps.db.transaction(client, (tx) => tx.conversation.recent(runtime.settings.historyTurns));
+  const stored = await deps.db.transaction(client, (tx) => tx.conversation.recent(runtime.settings.historyTurns));
+  const history = stored.map((t) => ({ role: t.role, body: deps.messageCipher.decrypt(t.bodyEnc, aad.turn(client.salonId, t.id)) }));
   const result = await runTurn(ctx, clean.text, history);
   return { reply: result.reply, heard: clean.text };
 }

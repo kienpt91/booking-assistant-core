@@ -77,7 +77,8 @@ describe("webhook limits (review finding: the shared pre-authentication bucket)"
 describe("serve configuration (review findings: unreachable knobs, plain-http endpoints)", () => {
   const env = {
     DATABASE_URL: "postgres://app@db.internal:5432/booking",
-    PII_KEY: "a".repeat(64),
+    PII_KEYS: "a".repeat(64),
+    MESSAGE_KEYS: "c".repeat(64),
     PHONE_HASH_KEY: "b".repeat(64),
     WEBHOOK_SECRETS: "s".repeat(32),
     MODEL_BASE_URL: "https://llm.example.test/v1",

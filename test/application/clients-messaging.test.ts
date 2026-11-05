@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { aad } from "../../src/application/aad.js";
+import { outboundRow, turnRow } from "../support/messages.js";
 import { book, listMyAppointments } from "../../src/application/booking.js";
 import { clientDisplayName, eraseClient, eraseClientByPhone, resolveClient } from "../../src/application/clients.js";
 import { applyRetention, DEFAULT_DISPATCH, dispatchAll, dispatchOutbox, releaseExpiredHolds } from "../../src/application/messaging.js";
@@ -72,8 +74,8 @@ describe("eraseClient", () => {
     const future = await book(deps, me, { serviceId: W.cut as ServiceId, staffId: W.staffA1 as StaffId, startsAt: at("2026-11-12", "10:00"), notes: "call me on the other number" });
     await book(deps, other, { serviceId: W.cut as ServiceId, staffId: W.staffA1 as StaffId, startsAt: at("2026-11-12", "11:00"), notes: "keep me" });
     await deps.db.transaction(system, async (tx) => {
-      await tx.conversation.append(me.clientId, "client", "hello", deps.clock.now());
-      await tx.outbox.enqueue({ id: "e1", clientId: me.clientId, dedupeKey: "k1", recipientEnc: deps.cipher.encrypt("+447700900001"), body: "hi", now: deps.clock.now() });
+      await tx.conversation.append(turnRow(deps, salonA, { clientId: me.clientId, role: "client" as "client" | "assistant", text: "hello", now: deps.clock.now() }));
+      await tx.outbox.enqueue(outboundRow(deps, salonA, { id: "e1", clientId: me.clientId, dedupeKey: "k1", to: "+447700900001", text: "hi", now: deps.clock.now() }));
     });
     await deps.db.transaction(me, (tx) =>
       tx.pending.create({ id: "p1", clientId: me.clientId, tool: "cancel", args: {}, argsDigest: "d", holdAppointmentId: null, createdAt: deps.clock.now(), expiresAt: deps.clock.now() + 5 * MINUTE }),
@@ -129,7 +131,7 @@ describe("dispatchOutbox", () => {
   async function queued(world = testWorld()) {
     const me = await newClient(world.deps, 1);
     await world.deps.db.transaction(system, (tx) =>
-      tx.outbox.enqueue({ id: "m1", clientId: me.clientId, dedupeKey: "msg-1:0", recipientEnc: world.deps.cipher.encrypt("+447700900001"), body: "Your haircut is booked.", now: world.clock.now() }),
+      tx.outbox.enqueue(outboundRow(world.deps, salonA, { id: "m1", clientId: me.clientId, dedupeKey: "msg-1:0", to: "+447700900001", text: "Your haircut is booked.", now: world.clock.now() })),
     );
     return { ...world, me, channel: new FakeChannel() };
   }
@@ -144,7 +146,7 @@ describe("dispatchOutbox", () => {
 
   it("does not enqueue the same reply twice", async () => {
     const { deps, me } = await queued();
-    const again = await deps.db.transaction(system, (tx) => tx.outbox.enqueue({ id: "m2", clientId: me.clientId, dedupeKey: "msg-1:0", recipientEnc: "v1:x", body: "dup", now: deps.clock.now() }));
+    const again = await deps.db.transaction(system, (tx) => tx.outbox.enqueue(outboundRow(deps, salonA, { id: "m2", clientId: me.clientId, dedupeKey: "msg-1:0", to: "+447700900001", text: "dup", now: deps.clock.now() })));
     expect(again).toBe(false);
   });
 
@@ -194,7 +196,7 @@ describe("dispatchOutbox", () => {
     const { deps, channel } = await queued();
     const b = await newClient(deps, 7, W.salonB);
     await deps.db.transaction({ kind: "system", salonId: salonB }, (tx) =>
-      tx.outbox.enqueue({ id: "m9", clientId: b.clientId, dedupeKey: "x", recipientEnc: deps.cipher.encrypt("+447700900007"), body: "مرحبا", now: deps.clock.now() }),
+      tx.outbox.enqueue(outboundRow(deps, salonB, { id: "m9", clientId: b.clientId, dedupeKey: "x", to: "+447700900007", text: "مرحبا", now: deps.clock.now() })),
     );
     expect(await dispatchAll(deps, channel)).toEqual({ sent: 2, retried: 0, dead: 0 });
     expect(channel.sent.map((m) => m.text).sort()).toEqual(["Your haircut is booked.", "مرحبا"].sort());
@@ -216,20 +218,20 @@ describe("housekeeping", () => {
     const { deps, clock, db } = testWorld();
     const me = await newClient(deps, 1);
     await deps.db.transaction(system, async (tx) => {
-      await tx.conversation.append(me.clientId, "client", "old", clock.now());
-      await tx.outbox.enqueue({ id: "old", clientId: me.clientId, dedupeKey: "old", recipientEnc: "v1:x", body: "old", now: clock.now() });
+      await tx.conversation.append(turnRow(deps, salonA, { clientId: me.clientId, role: "client" as "client" | "assistant", text: "old", now: clock.now() }));
+      await tx.outbox.enqueue(outboundRow(deps, salonA, { id: "old", clientId: me.clientId, dedupeKey: "old", to: "+447700900001", text: "old", now: clock.now() }));
       await tx.outbox.markSent("old", clock.now());
       await tx.inbox.claim("chat", "m-old", clock.now(), 1000);
-      await tx.inbox.complete("chat", "m-old", clock.now());
+      await tx.inbox.complete("chat", "m-old", 1, clock.now());
     });
     await book(deps, me, { serviceId: W.cut as ServiceId, staffId: W.staffA1 as StaffId, startsAt: at("2026-11-10", "10:00"), idempotencyKey: "old-key" });
     clock.advance(40 * DAY);
     await deps.db.transaction(system, async (tx) => {
-      await tx.conversation.append(me.clientId, "client", "new", clock.now());
+      await tx.conversation.append(turnRow(deps, salonA, { clientId: me.clientId, role: "client" as "client" | "assistant", text: "new", now: clock.now() }));
     });
     const report = await applyRetention(deps, salonA);
     expect(report).toMatchObject({ conversation: 1, outbox: 1, inbox: 1, idempotency: 1 });
-    expect(db.state.conversation.map((t) => t.body)).toEqual(["new"]);
+    expect(db.state.conversation.map((t) => deps.messageCipher.decrypt(t.bodyEnc, aad.turn(t.salonId, t.id)))).toEqual(["new"]);
     expect(db.state.appointments).toHaveLength(1);
   });
 });

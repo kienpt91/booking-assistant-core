@@ -120,6 +120,8 @@ export interface ClientRepository {
   /** System only. Creates the client, or returns the one that already has this phone key (two first messages at once). */
   upsertByPhoneKey(input: { id: ClientId; phoneKey: string; phoneEnc: string; nameEnc: string | null; now: Instant }): Promise<{ id: ClientId; created: boolean }>;
   get(id: ClientId): Promise<ClientRecord | undefined>;
+  /** System only. True when the client exists and is not erased. Holds the client row against an erasure until the transaction ends. */
+  lockActive(id: ClientId): Promise<boolean>;
   getPii(id: ClientId): Promise<ClientPii | undefined>;
   /** System only: deletes the personal data and marks the client erased; their history keeps its shape. */
   erase(id: ClientId, now: Instant): Promise<void>;
@@ -159,11 +161,15 @@ export interface IdempotencyRepository {
 }
 
 export interface InboxRepository {
-  /** True when this worker now owns the message; false when it is done or another worker holds an unexpired lease. */
-  claim(channel: string, messageId: string, now: Instant, leaseMs: number): Promise<boolean>;
-  complete(channel: string, messageId: string, now: Instant): Promise<void>;
+  /**
+   * The attempt number (1, 2, ...) when this worker now owns the message; 0 when it is done or another worker holds an unexpired lease.
+   * The attempt number is the owner's token: `complete` and `release` act only for the worker that still holds it, so a worker whose
+   * lease was taken over cannot finish or release the message under the new owner.
+   */
+  claim(channel: string, messageId: string, now: Instant, leaseMs: number): Promise<number>;
+  complete(channel: string, messageId: string, attempt: number, now: Instant): Promise<void>;
   /** Gives the message up so that the channel's next delivery can be processed at once. */
-  release(channel: string, messageId: string, now: Instant): Promise<void>;
+  release(channel: string, messageId: string, attempt: number, now: Instant): Promise<void>;
 }
 
 export interface NewOutbound {
@@ -172,7 +178,8 @@ export interface NewOutbound {
   /** one reply per inbound message and position: a retried webhook cannot enqueue it twice */
   readonly dedupeKey: string;
   readonly recipientEnc: string;
-  readonly body: string;
+  /** the text of the reply, encrypted: a reply can address the client by name */
+  readonly bodyEnc: string;
   readonly now: Instant;
 }
 
@@ -180,7 +187,7 @@ export interface DueOutbound {
   readonly id: string;
   readonly clientId: ClientId;
   readonly recipientEnc: string;
-  readonly body: string;
+  readonly bodyEnc: string;
   readonly attempts: number;
 }
 
@@ -229,16 +236,24 @@ export interface AuditRepository {
   recent(limit: number): Promise<AuditEntry[]>;
 }
 
+/** One turn as the assistant reads it. */
 export interface ConversationTurn {
   readonly role: "client" | "assistant";
   readonly body: string;
 }
 
+/** One turn as stored: the text is encrypted and bound to the turn's id. */
+export interface StoredTurn {
+  readonly id: string;
+  readonly role: ConversationTurn["role"];
+  readonly bodyEnc: string;
+}
+
 export interface ConversationRepository {
   /** The actor's most recent turns, oldest first. */
-  recent(limit: number): Promise<ConversationTurn[]>;
+  recent(limit: number): Promise<StoredTurn[]>;
   /** System only. */
-  append(clientId: ClientId, role: ConversationTurn["role"], body: string, now: Instant): Promise<void>;
+  append(turn: StoredTurn & { readonly clientId: ClientId; readonly now: Instant }): Promise<void>;
   /** System only: keeps the newest `keep` turns of the client. */
   trim(clientId: ClientId, keep: number): Promise<void>;
   deleteFor(clientId: ClientId): Promise<void>;

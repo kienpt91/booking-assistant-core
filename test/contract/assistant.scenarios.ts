@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { book, listMyAppointments } from "../../src/application/booking.js";
+import { eraseClient } from "../../src/application/clients.js";
 import { replyJson, ScriptedModel, toolJson } from "../../src/application/assistant/fake-model.js";
 import { receiveMessage } from "../../src/application/assistant/inbound.js";
 import { DEFAULT_POLICY_CONFIG, PolicyEngine } from "../../src/application/assistant/policy.js";
@@ -223,6 +224,55 @@ describe("failures never turn into actions", () => {
   });
 });
 
+describe("review findings: erasure in flight, long message ids, poison messages, lease owners", () => {
+  it("writes nothing for a client who was erased while their message was being answered", async () => {
+    const world = testWorld();
+    const me = await newClient(world.deps, 1);
+    const system = { kind: "system", salonId: W.salonA as never } as const;
+    const model = new ScriptedModel(async () => {
+      await eraseClient(world.deps, system, me.clientId);
+      return replyJson("Hello Sara!");
+    });
+    const chat = new Chat(world.deps, model);
+    const out = await chat.send(PHONES.c1, "hi");
+    expect(out.status).toBe("erased");
+    expect(chat.channel.sent).toHaveLength(0);
+    expect(await world.deps.db.transaction(me, (tx) => tx.conversation.recent(10))).toEqual([]);
+    expect(await world.deps.db.transaction(system, (tx) => tx.outbox.claimDue(world.clock.now() + 3_600_000, 10, 1000))).toEqual([]);
+  });
+
+  it("proposes a booking for a message id of 200 characters (the hold key is a digest, not the id)", async () => {
+    const world = testWorld();
+    const chat = new Chat(world.deps, new ScriptedModel([book10]));
+    const out = await chat.send(PHONES.c1, "book me 10 on Tuesday", { id: "m".repeat(200) });
+    expect(out.reply).toMatch(/^Book Haircut with Staff A1/);
+  });
+
+  it("gives up on a message that fails every time, so the sender stops retrying", async () => {
+    const world = testWorld();
+    const real = world.deps.cipher;
+    const broken = { ...world.deps, cipher: { encrypt: () => { throw new Error("storage down"); }, decrypt: real.decrypt } };
+    const chat = new Chat(broken, new ScriptedModel(() => replyJson("ok")));
+    for (let i = 0; i < 5; i++) await expect(chat.send(PHONES.c1, "hi", { id: "poison-1" })).rejects.toThrow("storage down");
+    expect((await chat.send(PHONES.c1, "hi", { id: "poison-1" })).status).toBe("abandoned");
+    expect((await chat.send(PHONES.c1, "hi", { id: "poison-1" })).status).toBe("duplicate");
+  });
+
+  it("lets only the worker that holds the lease complete or release a message", async () => {
+    const world = testWorld();
+    const system = { kind: "system", salonId: W.salonA as never } as const;
+    const t = world.clock.now();
+    const inbox = <T>(work: (tx: import("../../src/application/store.js").Tx) => Promise<T>) => world.deps.db.transaction(system, work);
+    expect(await inbox((tx) => tx.inbox.claim("chat", "own", t, 60_000))).toBe(1);
+    expect(await inbox((tx) => tx.inbox.claim("chat", "own", t + 61_000, 60_000))).toBe(2); // taken over
+    await inbox((tx) => tx.inbox.complete("chat", "own", 1, t + 62_000)); // the first worker, late: no effect
+    await inbox((tx) => tx.inbox.release("chat", "own", 1, t + 62_000)); // and cannot hand the message back either
+    expect(await inbox((tx) => tx.inbox.claim("chat", "own", t + 63_000, 60_000))).toBe(0); // the new owner still holds it
+    await inbox((tx) => tx.inbox.complete("chat", "own", 2, t + 64_000));
+    expect(await inbox((tx) => tx.inbox.claim("chat", "own", t + 999_000, 60_000))).toBe(0); // done stays done
+  });
+});
+
 describe("a channel that repeats itself and a process that dies", () => {
   it("answers a repeated delivery once", async () => {
     const world = testWorld();
@@ -240,14 +290,14 @@ describe("a channel that repeats itself and a process that dies", () => {
     const real = world.deps.cipher;
     let failOnce = false;
     const flaky: PiiCipher = {
-      encrypt: (plain) => {
+      encrypt: (plain, context) => {
         if (failOnce) {
           failOnce = false;
           throw new Error("simulated crash while storing the reply");
         }
-        return real.encrypt(plain);
+        return real.encrypt(plain, context);
       },
-      decrypt: (sealed) => real.decrypt(sealed),
+      decrypt: (sealed, context) => real.decrypt(sealed, context),
     };
     const deps = { ...world.deps, cipher: flaky };
     const chat = new Chat(deps, new ScriptedModel([book10]));

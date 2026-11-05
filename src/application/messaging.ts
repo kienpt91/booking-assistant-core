@@ -1,5 +1,6 @@
 import type { SalonId } from "../domain/ids.js";
 import { DAY, MINUTE, type Instant } from "../domain/time/instant.js";
+import { aad } from "./aad.js";
 import type { Deps, OutboundChannel } from "./ports.js";
 import type { PurgeReport } from "./store.js";
 
@@ -35,7 +36,7 @@ export async function dispatchOutbox(deps: Deps, channel: OutboundChannel, salon
   let dead = 0;
   for (const message of due) {
     try {
-      await channel.send({ idempotencyKey: message.id, to: deps.cipher.decrypt(message.recipientEnc), text: message.body });
+      await channel.send({ idempotencyKey: message.id, to: deps.cipher.decrypt(message.recipientEnc, aad.recipient(salonId, message.id)), text: deps.messageCipher.decrypt(message.bodyEnc, aad.outboxBody(salonId, message.id)) });
       await deps.db.transaction(system, (tx) => tx.outbox.markSent(message.id, deps.clock.now()));
       sent++;
     } catch (error) {

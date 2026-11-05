@@ -14,7 +14,7 @@ export interface Running {
 
 /** Starts the webhook server and the background jobs: the outbox dispatcher, the release of unconfirmed holds and retention. */
 export async function startServer(config: ServeConfig, write: (line: string) => void): Promise<Running> {
-  const { deps, close } = compose({ databaseUrl: config.databaseUrl, piiKey: config.piiKey, phoneHashKey: config.phoneHashKey, poolMax: 10, write });
+  const { deps, close } = compose({ databaseUrl: config.databaseUrl, piiKeys: config.piiKeys, messageKeys: config.messageKeys, phoneHashKey: config.phoneHashKey, poolMax: 10, write });
   const runtime = createRuntime(new HttpChatModel({ baseUrl: config.modelBaseUrl, apiKey: config.modelApiKey, model: config.modelName }), { defaultCountryCode: config.defaultCountryCode });
   const channel = new RelayChannel({ url: config.relayUrl, token: config.relayToken });
   const server = createWebhookServer({

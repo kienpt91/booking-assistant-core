@@ -91,7 +91,8 @@ function build(db: Database, now: Instant | undefined): { deps: Deps; clock: Fak
     clock,
     ids: new SequentialIds(),
     hasher: new HmacHasher(randomBytes(32)),
-    cipher: new AesGcmCipher({ k1: randomBytes(32) }, "k1"),
+    cipher: new AesGcmCipher({ k1: randomBytes(32) }, "k1", "pii"),
+    messageCipher: new AesGcmCipher({ k1: randomBytes(32) }, "k1", "message"),
     logger: new JsonLogger((line) => logs.push(line), clock),
   };
   return { deps, clock, logs };

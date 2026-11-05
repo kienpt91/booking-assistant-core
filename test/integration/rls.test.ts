@@ -25,11 +25,11 @@ describeDb("row level security: who can see and change what", () => {
       await insertAppointment(c, { id: uid(2), client: W.clientA2, staff: W.staffA2, start: "2026-11-10T11:00:00Z", end: "2026-11-10T11:30:00Z" });
       await insertAppointment(c, { id: uid(3), salon: W.salonB, staff: W.staffB1, client: W.clientB1, service: W.cutB, start: "2026-11-10T10:00:00Z", end: "2026-11-10T10:30:00Z" });
       await c.query(
-        `INSERT INTO conversation_turns (salon_id, client_id, role, body, created_at) VALUES ($1, $2, 'client', 'hello', now()), ($1, $3, 'client', 'hi', now())`,
+        `INSERT INTO conversation_turns (id, salon_id, client_id, role, body_enc, created_at) VALUES ('e6000000-0000-4000-8000-000000000001', $1, $2, 'client', 'v2:hello', now()), ('e6000000-0000-4000-8000-000000000002', $1, $3, 'client', 'v2:hi', now())`,
         [W.salonA, W.clientA1, W.clientA2],
       );
       await c.query(
-        `INSERT INTO outbox_messages (id, salon_id, client_id, dedupe_key, recipient_enc, body, next_attempt_at, created_at) VALUES ($1, $2, $3, 'k1', 'v1:x', 'hello', now(), now())`,
+        `INSERT INTO outbox_messages (id, salon_id, client_id, dedupe_key, recipient_enc, body_enc, next_attempt_at, created_at) VALUES ($1, $2, $3, 'k1', 'v2:x', 'v2:hello', now(), now())`,
         [uid(50), W.salonA, W.clientA1],
       );
       await c.query(
@@ -153,7 +153,7 @@ describeDb("row level security: who can see and change what", () => {
     });
 
     it("sees only their own conversation and audit entries, and cannot rewrite or remove the audit trail", async () => {
-      expect((await rows(clientA1, "SELECT body FROM conversation_turns")).map((r) => r.body)).toEqual(["hello"]);
+      expect((await rows(clientA1, "SELECT body_enc FROM conversation_turns")).map((r) => r.body_enc)).toEqual(["v2:hello"]);
       expect(ids(await rows(clientA1, "SELECT id FROM audit_log"))).toEqual([uid(60)]);
       expect((await failure(() => rows(clientA1, "UPDATE audit_log SET event = 'x'")))?.code).toBe("42501");
       expect((await failure(() => rows(clientA1, "DELETE FROM audit_log")))?.code).toBe("42501");

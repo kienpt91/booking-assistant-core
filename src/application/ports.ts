@@ -20,13 +20,14 @@ export interface Logger {
 
 /** Encryption of personal data at rest. The key never reaches the database. */
 export interface PiiCipher {
-  encrypt(plain: string): string;
-  decrypt(sealed: string): string;
+  /** `context` names what the value belongs to (see aad.ts); it is authenticated with the value */
+  encrypt(plain: string, context: string): string;
+  decrypt(sealed: string, context: string): string;
 }
 
 export interface Hasher {
   /** keyed hash of a phone number (HMAC): the lookup key stored in the database */
-  phoneKey(e164: string): string;
+  phoneKey(salonId: string, e164: string): string;
   /** unkeyed SHA-256 of a text, hex: for digests of requests and arguments, not for secrets */
   digest(text: string): string;
 }
@@ -37,7 +38,10 @@ export interface Deps {
   readonly clock: Clock;
   readonly ids: IdGenerator;
   readonly hasher: Hasher;
+  /** phone numbers, names and recipients */
   readonly cipher: PiiCipher;
+  /** reply and conversation text: a different key from `cipher` */
+  readonly messageCipher: PiiCipher;
   readonly logger: Logger;
 }
 

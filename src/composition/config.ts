@@ -1,7 +1,10 @@
 /** Configuration of `serve`, read from the environment. */
 export interface ServeConfig {
   readonly databaseUrl: string;
-  readonly piiKey: string;
+  /** key ring for phone numbers and names: `id=key,id2=key2` (the first is active) or one bare key */
+  readonly piiKeys: string;
+  /** key ring for reply and conversation text */
+  readonly messageKeys: string;
   readonly phoneHashKey: string;
   readonly webhookSecrets: readonly string[];
   readonly channel: string;
@@ -21,7 +24,7 @@ export interface ServeConfig {
   readonly trustedProxyHops: number;
 }
 
-const REQUIRED = ["DATABASE_URL", "PII_KEY", "PHONE_HASH_KEY", "WEBHOOK_SECRETS", "MODEL_BASE_URL", "MODEL_API_KEY", "MODEL_NAME", "RELAY_URL", "RELAY_TOKEN"] as const;
+const REQUIRED = ["DATABASE_URL", "PII_KEYS", "MESSAGE_KEYS", "PHONE_HASH_KEY", "WEBHOOK_SECRETS", "MODEL_BASE_URL", "MODEL_API_KEY", "MODEL_NAME", "RELAY_URL", "RELAY_TOKEN"] as const;
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /** https, or http on this machine only: the bearer tokens, the numbers and the conversation travel over these URLs. */
@@ -55,7 +58,8 @@ export function readServeConfig(env: Readonly<Record<string, string | undefined>
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("PORT must be a port number");
   return {
     databaseUrl: get("DATABASE_URL"),
-    piiKey: get("PII_KEY"),
+    piiKeys: get("PII_KEYS"),
+    messageKeys: get("MESSAGE_KEYS"),
     phoneHashKey: get("PHONE_HASH_KEY"),
     webhookSecrets: secrets,
     channel: env["CHANNEL"] ?? "whatsapp",

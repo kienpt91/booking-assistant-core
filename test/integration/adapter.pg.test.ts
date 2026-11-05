@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { aad } from "../../src/application/aad.js";
+import { turnRow } from "../support/messages.js";
 import { book, listMyAppointments } from "../../src/application/booking.js";
 import { eraseClient, eraseClientByPhone } from "../../src/application/clients.js";
 import { replyJson, ScriptedModel, toolJson } from "../../src/application/assistant/fake-model.js";
@@ -208,11 +210,11 @@ describe("records the audit trail, the conversation and the proposals", () => {
     const { deps } = testWorld();
     const a = await newClient(deps, 1);
     await deps.db.transaction(system, async (tx) => {
-      for (let i = 0; i < 12; i++) await tx.conversation.append(a.clientId, i % 2 === 0 ? "client" : "assistant", `turn ${i}`, deps.clock.now() + i);
+      for (let i = 0; i < 12; i++) await tx.conversation.append(turnRow(deps, salonA, { clientId: a.clientId, role: i % 2 === 0 ? "client" : "assistant" as "client" | "assistant", text: `turn ${i}`, now: deps.clock.now() + i }));
       await tx.conversation.trim(a.clientId, 10);
     });
     const recent = await deps.db.transaction(a, (tx) => tx.conversation.recent(4));
-    expect(recent.map((t) => t.body)).toEqual(["turn 8", "turn 9", "turn 10", "turn 11"]);
+    expect(recent.map((t) => deps.messageCipher.decrypt(t.bodyEnc, aad.turn(salonA, t.id)))).toEqual(["turn 8", "turn 9", "turn 10", "turn 11"]);
     expect(await deps.db.transaction(a, (tx) => tx.conversation.recent(50))).toHaveLength(10);
   });
 
@@ -251,11 +253,11 @@ describe("outbox lifecycle", () => {
     const a = await newClient(deps, 1);
     const now = clock.now();
     await deps.db.transaction(system, async (tx) => {
-      expect(await tx.outbox.enqueue({ id: "e7000000-0000-4000-8000-000000000001", clientId: a.clientId, dedupeKey: "k", recipientEnc: "v1:x", body: "hello", now })).toBe(true);
-      expect(await tx.outbox.enqueue({ id: "e7000000-0000-4000-8000-000000000002", clientId: a.clientId, dedupeKey: "k", recipientEnc: "v1:x", body: "again", now })).toBe(false);
+      expect(await tx.outbox.enqueue({ id: "e7000000-0000-4000-8000-000000000001", clientId: a.clientId, dedupeKey: "k", recipientEnc: "v2:x", bodyEnc: "v2:hello", now })).toBe(true);
+      expect(await tx.outbox.enqueue({ id: "e7000000-0000-4000-8000-000000000002", clientId: a.clientId, dedupeKey: "k", recipientEnc: "v2:x", bodyEnc: "v2:again", now })).toBe(false);
     });
     const first = await deps.db.transaction(system, (tx) => tx.outbox.claimDue(now, 10, MINUTE));
-    expect(first).toMatchObject([{ id: "e7000000-0000-4000-8000-000000000001", attempts: 1, body: "hello" }]);
+    expect(first).toMatchObject([{ id: "e7000000-0000-4000-8000-000000000001", attempts: 1, bodyEnc: "v2:hello" }]);
     expect(await deps.db.transaction(system, (tx) => tx.outbox.claimDue(now, 10, MINUTE))).toEqual([]); // leased
     await deps.db.transaction(system, (tx) => tx.outbox.markFailed("e7000000-0000-4000-8000-000000000001", now + 30_000));
     expect(await deps.db.transaction(system, (tx) => tx.outbox.claimDue(now + 10_000, 10, MINUTE))).toEqual([]); // not due yet
@@ -297,13 +299,12 @@ describe("personal data", () => {
         }
       }
     });
-    // Known gap, stated here and in SECURITY.md: a reply the model writes may address the client by name ("Noted, Sara."), and
-    // reply text is kept in the outbox until it is sent and in the conversation window, in the clear but with numbers and e-mail
-    // addresses masked. The phone number, the profile name and the recipient are encrypted; nothing else may contain a needle.
-    const allowed = new Set(["conversation_turns.body contains Sara", "outbox_messages.body contains Sara"]);
-    expect(found.filter((f) => !allowed.has(f))).toEqual([]);
+    // every text column was scanned for the number, the e-mail address and the name: none of them is in the clear anywhere
+    expect(found).toEqual([]);
+    const sealedText = await backend.admin((c) => c.query("SELECT (SELECT bool_and(body_enc ~ '^v2:k1:') FROM outbox_messages) AS outbox, (SELECT bool_and(body_enc ~ '^v2:k1:') FROM conversation_turns) AS turns"));
+    expect(sealedText.rows[0]).toEqual({ outbox: true, turns: true });
     const sealed = await backend.admin((c) => c.query("SELECT phone_enc, name_enc, phone_hash FROM client_pii"));
-    expect(sealed.rows[0]).toMatchObject({ phone_enc: expect.stringMatching(/^v1:k1:/), name_enc: expect.stringMatching(/^v1:k1:/), phone_hash: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(sealed.rows[0]).toMatchObject({ phone_enc: expect.stringMatching(/^v2:k1:/), name_enc: expect.stringMatching(/^v2:k1:/), phone_hash: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 
   it("erases a client: personal data, conversation, queued replies, proposals and stored answers are gone; history keeps its shape", async () => {
@@ -345,9 +346,9 @@ describe("personal data", () => {
     const { deps, clock } = testWorld();
     const a = await newClient(deps, 1);
     await deps.db.transaction(system, async (tx) => {
-      await tx.conversation.append(a.clientId, "client", "old", clock.now());
+      await tx.conversation.append(turnRow(deps, salonA, { clientId: a.clientId, role: "client" as "client" | "assistant", text: "old", now: clock.now() }));
       await tx.inbox.claim("chat", "old", clock.now(), 1000);
-      await tx.inbox.complete("chat", "old", clock.now());
+      await tx.inbox.complete("chat", "old", 1, clock.now());
     });
     clock.advance(60 * DAY);
     const report = await applyRetention(deps, salonA);

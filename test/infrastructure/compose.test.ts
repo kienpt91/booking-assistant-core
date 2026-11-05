@@ -1,10 +1,12 @@
+import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import * as api from "../../src/index.js";
 import { compose, readServeConfig, throwawayKeys } from "../../src/composition/compose.js";
+import * as api from "../../src/index.js";
 
 const env = {
   DATABASE_URL: "postgres://app@127.0.0.1:1/none",
-  PII_KEY: "a".repeat(64),
+  PII_KEYS: "a".repeat(64),
+  MESSAGE_KEYS: "c".repeat(64),
   PHONE_HASH_KEY: "b".repeat(64),
   WEBHOOK_SECRETS: `${"s".repeat(32)}, ${"t".repeat(40)}`,
   MODEL_BASE_URL: "https://llm.example.test/v1",
@@ -15,19 +17,25 @@ const env = {
 };
 
 describe("compose", () => {
-  it("wires the real adapters without connecting, and closes the pool", async () => {
+  it("wires the real adapters without connecting, with a separate key for messages, and closes the pool", async () => {
     const lines: string[] = [];
     const { deps, close } = compose({ databaseUrl: env.DATABASE_URL, ...throwawayKeys(), poolMax: 2, write: (l) => lines.push(l) });
-    expect(deps.cipher.decrypt(deps.cipher.encrypt("+447700900001"))).toBe("+447700900001");
-    expect(deps.hasher.phoneKey("+447700900001")).toMatch(/^[0-9a-f]{64}$/);
-    expect(deps.ids.next()).toMatch(/^[0-9a-f-]{36}$/);
+    expect(deps.cipher.decrypt(deps.cipher.encrypt("+447700900001", "ctx"), "ctx")).toBe("+447700900001");
+    expect(() => deps.messageCipher.decrypt(deps.cipher.encrypt("x", "ctx"), "ctx")).toThrow();
+    expect(deps.hasher.phoneKey("salon", "+447700900001")).toMatch(/^[0-9a-f]{64}$/);
     deps.logger.info("hello", { phone: "+447700900001" });
     expect(lines[0]).toContain('"phone":"[redacted]"');
     await close();
   });
 
-  it("refuses a weak key without printing it", () => {
-    expect(() => compose({ databaseUrl: env.DATABASE_URL, piiKey: "short-secret-value", phoneHashKey: "b".repeat(64) })).toThrow("PII_KEY must be 32 bytes");
+  it("refuses weak keys and the same key used twice, without printing a key", () => {
+    const keys = throwawayKeys();
+    expect(() => compose({ databaseUrl: env.DATABASE_URL, ...keys, piiKeys: "short-secret-value" })).toThrow("PII_KEYS must be 32 bytes");
+    expect(() => compose({ databaseUrl: env.DATABASE_URL, ...keys, piiKeys: "a".repeat(64) })).toThrow("does not look random");
+    expect(() => compose({ databaseUrl: env.DATABASE_URL, ...keys, messageKeys: keys.piiKeys })).toThrow("must all be different");
+    expect(() => compose({ databaseUrl: env.DATABASE_URL, ...keys, phoneHashKey: keys.messageKeys })).toThrow("must all be different");
+    const ring = `k2=${randomBytes(32).toString("hex")},k1=${keys.piiKeys}`;
+    expect(compose({ databaseUrl: env.DATABASE_URL, ...keys, piiKeys: ring }).deps.cipher.encrypt("x", "c").startsWith("v2:k2:")).toBe(true);
   });
 
   it("writes to stdout by default", async () => {
@@ -47,7 +55,7 @@ describe("readServeConfig", () => {
   it("names every missing variable and never a value", () => {
     // the URL is assembled at run time: the secret scanner (rightly) refuses a literal URL with a password
     const url = ["postgres://user", "hunter2"].join(":") + "@host/db";
-    expect(() => readServeConfig({ DATABASE_URL: url })).toThrow(/missing environment variables: PII_KEY, PHONE_HASH_KEY, WEBHOOK_SECRETS/);
+    expect(() => readServeConfig({ DATABASE_URL: url })).toThrow(/missing environment variables: PII_KEYS, MESSAGE_KEYS, PHONE_HASH_KEY, WEBHOOK_SECRETS/);
     expect(() => readServeConfig({ DATABASE_URL: url })).not.toThrow(/hunter2/);
   });
 

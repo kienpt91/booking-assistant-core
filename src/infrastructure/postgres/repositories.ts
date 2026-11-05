@@ -313,6 +313,11 @@ export function createRepositories(actor: Actor, db: Db): Tx {
       const r = (await rows(db, `SELECT id, status, created_at FROM clients WHERE id = $1 AND ${s.sql}`, [id, ...s.values]))[0];
       return r ? { id: asId<"ClientId">(text(r["id"])), status: text(r["status"]) as ClientRecord["status"], createdAt: ms(r["created_at"]) } : undefined;
     },
+    async lockActive(id: ClientId): Promise<boolean> {
+      requireSystem("clients.lockActive");
+      const r = (await rows(db, "SELECT status FROM clients WHERE salon_id = $1 AND id = $2 FOR SHARE", [salonId, id]))[0];
+      return r !== undefined && r["status"] === "active";
+    },
     async getPii(id: ClientId): Promise<ClientPii | undefined> {
       const s = scope(2);
       const r = (await rows(db, `SELECT phone_enc, name_enc FROM client_pii WHERE client_id = $1 AND ${s.sql}`, [id, ...s.values]))[0];
@@ -382,23 +387,24 @@ export function createRepositories(actor: Actor, db: Db): Tx {
   const inbox: InboxRepository = {
     async claim(channel, messageId, now, leaseMs) {
       requireSystem("inbox.claim");
-      const claimed = await run(
+      const claimed = await rows(
         db,
         `INSERT INTO inbound_messages (salon_id, channel, message_id, status, attempts, lease_until, received_at)
          VALUES ($1, $2, $3, 'processing', 1, $4, $5)
          ON CONFLICT (salon_id, channel, message_id) DO UPDATE SET attempts = inbound_messages.attempts + 1, lease_until = EXCLUDED.lease_until
-           WHERE inbound_messages.status = 'processing' AND inbound_messages.lease_until <= $5`,
+           WHERE inbound_messages.status = 'processing' AND inbound_messages.lease_until <= $5
+         RETURNING attempts`,
         [salonId, channel, messageId, at(now + leaseMs), at(now)],
       );
-      return claimed === 1;
+      return Number(claimed[0]?.["attempts"] ?? 0);
     },
-    async complete(channel, messageId, now) {
+    async complete(channel, messageId, attempt, now) {
       requireSystem("inbox.complete");
-      await run(db, "UPDATE inbound_messages SET status = 'done', completed_at = $4 WHERE salon_id = $1 AND channel = $2 AND message_id = $3", [salonId, channel, messageId, at(now)]);
+      await run(db, "UPDATE inbound_messages SET status = 'done', completed_at = $5 WHERE salon_id = $1 AND channel = $2 AND message_id = $3 AND attempts = $4", [salonId, channel, messageId, attempt, at(now)]);
     },
-    async release(channel, messageId, now) {
+    async release(channel, messageId, attempt, now) {
       requireSystem("inbox.release");
-      await run(db, "UPDATE inbound_messages SET lease_until = $4 WHERE salon_id = $1 AND channel = $2 AND message_id = $3 AND status = 'processing'", [salonId, channel, messageId, at(now)]);
+      await run(db, "UPDATE inbound_messages SET lease_until = $5 WHERE salon_id = $1 AND channel = $2 AND message_id = $3 AND attempts = $4 AND status = 'processing'", [salonId, channel, messageId, attempt, at(now)]);
     },
   };
 
@@ -408,9 +414,9 @@ export function createRepositories(actor: Actor, db: Db): Tx {
       return (
         (await run(
           db,
-          `INSERT INTO outbox_messages (id, salon_id, client_id, dedupe_key, recipient_enc, body, status, attempts, next_attempt_at, created_at)
+          `INSERT INTO outbox_messages (id, salon_id, client_id, dedupe_key, recipient_enc, body_enc, status, attempts, next_attempt_at, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, 'pending', 0, $7, $7) ON CONFLICT (salon_id, dedupe_key) DO NOTHING`,
-          [m.id, salonId, m.clientId, m.dedupeKey, m.recipientEnc, m.body, at(m.now)],
+          [m.id, salonId, m.clientId, m.dedupeKey, m.recipientEnc, m.bodyEnc, at(m.now)],
         )) === 1
       );
     },
@@ -424,12 +430,12 @@ export function createRepositories(actor: Actor, db: Db): Tx {
              WHERE salon_id = $1 AND status = 'pending' AND next_attempt_at <= $2 AND (locked_until IS NULL OR locked_until <= $2)
              ORDER BY next_attempt_at, id LIMIT $3 FOR UPDATE SKIP LOCKED)
            UPDATE outbox_messages o SET attempts = o.attempts + 1, locked_until = $4 FROM due WHERE o.id = due.id
-           RETURNING o.id, o.client_id, o.recipient_enc, o.body, o.attempts, o.next_attempt_at`,
+           RETURNING o.id, o.client_id, o.recipient_enc, o.body_enc, o.attempts, o.next_attempt_at`,
           [salonId, at(now), limit, at(now + leaseMs)],
         )
       )
         .sort((a, b) => ms(a["next_attempt_at"]) - ms(b["next_attempt_at"]) || text(a["id"]).localeCompare(text(b["id"])))
-        .map((r) => ({ id: text(r["id"]), clientId: asId<"ClientId">(text(r["client_id"])), recipientEnc: text(r["recipient_enc"]), body: text(r["body"]), attempts: Number(r["attempts"]) }));
+        .map((r) => ({ id: text(r["id"]), clientId: asId<"ClientId">(text(r["client_id"])), recipientEnc: text(r["recipient_enc"]), bodyEnc: text(r["body_enc"]), attempts: Number(r["attempts"]) }));
     },
     async markSent(id, now) {
       requireSystem("outbox.markSent");
@@ -489,21 +495,22 @@ export function createRepositories(actor: Actor, db: Db): Tx {
   const conversation: ConversationRepository = {
     async recent(limit) {
       const s = scope(2);
-      return (await rows(db, `SELECT role, body FROM (SELECT id, role, body FROM conversation_turns WHERE ${s.sql} ORDER BY id DESC LIMIT $1) t ORDER BY id`, [limit, ...s.values])).map((r) => ({
+      return (await rows(db, `SELECT id, role, body_enc FROM (SELECT id, seq, role, body_enc FROM conversation_turns WHERE ${s.sql} ORDER BY seq DESC LIMIT $1) t ORDER BY seq`, [limit, ...s.values])).map((r) => ({
+        id: text(r["id"]),
         role: text(r["role"]) as "client" | "assistant",
-        body: text(r["body"]),
+        bodyEnc: text(r["body_enc"]),
       }));
     },
-    async append(client, role, body, now) {
+    async append(turn) {
       requireSystem("conversation.append");
-      await run(db, "INSERT INTO conversation_turns (salon_id, client_id, role, body, created_at) VALUES ($1, $2, $3, $4, $5)", [salonId, client, role, body, at(now)]);
+      await run(db, "INSERT INTO conversation_turns (id, salon_id, client_id, role, body_enc, created_at) VALUES ($1, $2, $3, $4, $5, $6)", [turn.id, salonId, turn.clientId, turn.role, turn.bodyEnc, at(turn.now)]);
     },
     async trim(client, keep) {
       requireSystem("conversation.trim");
       await run(
         db,
         `DELETE FROM conversation_turns WHERE salon_id = $1 AND client_id = $2
-           AND id NOT IN (SELECT id FROM conversation_turns WHERE salon_id = $1 AND client_id = $2 ORDER BY id DESC LIMIT $3)`,
+           AND id NOT IN (SELECT id FROM conversation_turns WHERE salon_id = $1 AND client_id = $2 ORDER BY seq DESC LIMIT $3)`,
         [salonId, client, keep],
       );
     },

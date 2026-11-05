@@ -14,14 +14,15 @@ CREATE TABLE inbound_messages (
 
 -- Replies waiting to be sent (the outbox pattern): written in the same transaction as the state change that caused
 -- them, sent by a separate dispatcher, at least once. dedupe_key makes a retried webhook enqueue a reply only once.
--- The recipient is an encrypted envelope, never a plain number.
+-- The recipient and the text are encrypted envelopes bound to the row (AES-GCM with the salon and the row id as additional data):
+-- never a plain number or a plain sentence, since a reply can address the client by name.
 CREATE TABLE outbox_messages (
   id uuid PRIMARY KEY,
   salon_id uuid NOT NULL,
   client_id uuid NOT NULL,
   dedupe_key text NOT NULL CHECK (char_length(dedupe_key) BETWEEN 1 AND 300),
   recipient_enc text NOT NULL CHECK (recipient_enc ~ '^v[0-9]+:'),
-  body text NOT NULL CHECK (char_length(body) BETWEEN 1 AND 4000),
+  body_enc text NOT NULL CHECK (body_enc ~ '^v[0-9]+:' AND char_length(body_enc) <= 8000),
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'dead')),
   attempts integer NOT NULL DEFAULT 0,
   next_attempt_at timestamptz NOT NULL,
@@ -33,18 +34,19 @@ CREATE TABLE outbox_messages (
 );
 CREATE INDEX outbox_due_idx ON outbox_messages (salon_id, next_attempt_at) WHERE status = 'pending';
 
--- A short window of the conversation, so "the afternoon" can follow "which day?". Text is stored redacted (e-mail
--- addresses and phone numbers masked), capped, and deleted with the client.
+-- A short window of the conversation, so "the afternoon" can follow "which day?". The text is masked (e-mail addresses and phone
+-- numbers), capped, encrypted with a key of its own and bound to the turn, and deleted with the client.
 CREATE TABLE conversation_turns (
-  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id uuid PRIMARY KEY,
+  seq bigint GENERATED ALWAYS AS IDENTITY,
   salon_id uuid NOT NULL,
   client_id uuid NOT NULL,
   role text NOT NULL CHECK (role IN ('client', 'assistant')),
-  body text NOT NULL CHECK (char_length(body) <= 2000),
+  body_enc text NOT NULL CHECK (body_enc ~ '^v[0-9]+:' AND char_length(body_enc) <= 8000),
   created_at timestamptz NOT NULL,
   FOREIGN KEY (salon_id, client_id) REFERENCES clients (salon_id, id)
 );
-CREATE INDEX conversation_turns_client_idx ON conversation_turns (client_id, id DESC);
+CREATE INDEX conversation_turns_client_idx ON conversation_turns (client_id, seq DESC);
 
 -- Every tool call the assistant made or was refused, with the decision and the reasons. Arguments are stored after
 -- redaction (see src/domain/pii.ts), never free text and never a phone number. Append-only for the application roles.
