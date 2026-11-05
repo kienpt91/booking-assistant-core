@@ -1,14 +1,14 @@
 import { defineConfig } from "vitest/config";
 
-// One configuration for both suites. Without BOOKING_TEST_DATABASE_URL the tests that need PostgreSQL are skipped and
-// only the thresholds of the pure layers apply. With it (scripts/integration.sh starts a throwaway database) every
-// test runs and the overall threshold applies too, because the PostgreSQL adapters are only exercised there.
+// One configuration for both suites. Without BOOKING_TEST_DATABASE_URL the tests under test/integration (they need
+// PostgreSQL) are left out and only the thresholds of the pure layers apply. With it (scripts/integration.sh starts a
+// throwaway database) every test runs and the overall threshold applies too, because the adapters are only exercised there.
 const withDatabase = Boolean(process.env.BOOKING_TEST_DATABASE_URL);
 
 export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
-    exclude: ["node_modules/**"],
+    exclude: ["node_modules/**", ...(withDatabase ? [] : ["test/integration/**"])],
     // the suites that talk to PostgreSQL run 50 connections at once on a shared runner
     testTimeout: 120_000,
     hookTimeout: 120_000,

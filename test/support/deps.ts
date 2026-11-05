@@ -1,13 +1,13 @@
 import { randomBytes } from "node:crypto";
-import type { Clock, Deps, IdGenerator } from "../../src/application/ports.js";
 import { resolveClient } from "../../src/application/clients.js";
+import type { Clock, Deps, IdGenerator } from "../../src/application/ports.js";
+import type { Database } from "../../src/application/store.js";
 import type { ClientActor } from "../../src/domain/actor.js";
 import { asId, type SalonId } from "../../src/domain/ids.js";
 import { normalizePhone } from "../../src/domain/phone.js";
 import type { Instant } from "../../src/domain/time/instant.js";
 import { AesGcmCipher, HmacHasher } from "../../src/infrastructure/crypto.js";
 import { JsonLogger } from "../../src/infrastructure/system.js";
-import type { Database } from "../../src/application/store.js";
 import { MemoryDatabase } from "./memory-db.js";
 import { W } from "./seed.js";
 
@@ -31,7 +31,7 @@ export class FakeClock implements Clock {
   }
 }
 
-/** Identifiers 00000000-0000-4000-8000-000000000001, ...000002 and so on: stable across runs. */
+/** Identifiers e0000000-0000-4000-8000-000000000001, ...000002 and so on: stable across runs. */
 export class SequentialIds implements IdGenerator {
   private n = 0;
 
@@ -51,27 +51,62 @@ export function at(date: string, time: string): Instant {
   return Date.UTC(y, m - 1, d, h, mi);
 }
 
+/**
+ * Where the use case scenarios run. The default is the in-memory double; the PostgreSQL suites register a backend over a
+ * real database, so that the same scenarios prove the double and the real thing agree.
+ */
+export interface Backend {
+  create(): Database;
+  addTimeOff(db: Database, staffId: string, start: Instant, end: Instant): Promise<void>;
+}
+
+const memoryBackend: Backend = {
+  create: () => new MemoryDatabase(),
+  addTimeOff: async (db, staffId, start, end) => (db as MemoryDatabase).addTimeOff(staffId, { start, end }),
+};
+
+let backend: Backend = memoryBackend;
+
+export function useBackend(next: Backend | undefined): void {
+  backend = next ?? memoryBackend;
+}
+
 export interface TestWorld {
   readonly deps: Deps;
   readonly clock: FakeClock;
-  readonly db: MemoryDatabase;
+  readonly db: Database;
   readonly logs: string[];
+  addTimeOff(staffId: string, start: Instant, end: Instant): Promise<void>;
 }
 
-/** Dependencies for the use cases over the in-memory database, with real encryption and hashing and keys made at run time. */
-export function testWorld(over: { db?: Database; now?: Instant } = {}): TestWorld {
-  const clock = new FakeClock(over.now ?? MONDAY_9);
-  const db = new MemoryDatabase();
+export interface MemoryWorld extends TestWorld {
+  readonly db: MemoryDatabase;
+}
+
+function build(db: Database, now: Instant | undefined): { deps: Deps; clock: FakeClock; logs: string[] } {
+  const clock = new FakeClock(now ?? MONDAY_9);
   const logs: string[] = [];
   const deps: Deps = {
-    db: over.db ?? db,
+    db,
     clock,
     ids: new SequentialIds(),
     hasher: new HmacHasher(randomBytes(32)),
     cipher: new AesGcmCipher({ k1: randomBytes(32) }, "k1"),
     logger: new JsonLogger((line) => logs.push(line), clock),
   };
-  return { deps, clock, db, logs };
+  return { deps, clock, logs };
+}
+
+/** Dependencies for the use cases on the current backend, with real encryption and hashing and keys made at run time. */
+export function testWorld(over: { now?: Instant } = {}): TestWorld {
+  const db = backend.create();
+  return { ...build(db, over.now), db, addTimeOff: (staffId, start, end) => backend.addTimeOff(db, staffId, start, end) };
+}
+
+/** The same, always on the in-memory double, for tests that look inside it. */
+export function memoryWorld(over: { now?: Instant } = {}): MemoryWorld {
+  const db = new MemoryDatabase();
+  return { ...build(db, over.now), db, addTimeOff: async (staffId, start, end) => db.addTimeOff(staffId, { start, end }) };
 }
 
 /** A client of salon A with a made-up number +44 7700 9000NN. */

@@ -2,10 +2,9 @@ import { describe, expect, it } from "vitest";
 import { findAvailability } from "../../src/application/availability.js";
 import { book, cancelAppointment, confirmHold, holdSlot, listMyAppointments, moveAppointment, releaseHold } from "../../src/application/booking.js";
 import type { StaffActor } from "../../src/domain/actor.js";
-import { asId, type AppointmentId, type SalonId, type ServiceId, type StaffId } from "../../src/domain/ids.js";
+import { asId, type SalonId, type ServiceId, type StaffId } from "../../src/domain/ids.js";
 import { MINUTE } from "../../src/domain/time/instant.js";
 import { at, newClient, testWorld } from "../support/deps.js";
-import { MemoryDatabase, standardSeed } from "../support/memory-db.js";
 import { W } from "../support/seed.js";
 
 const cut = W.cut as ServiceId;
@@ -115,8 +114,8 @@ describe("book", () => {
   });
 
   it("respects time off", async () => {
-    const db = new MemoryDatabase({ ...standardSeed(), timeOff: { [W.staffA1]: [{ start: at(TUE, "12:00"), end: at(TUE, "14:00") }] } });
-    const { deps } = testWorld({ db });
+    const { deps, addTimeOff } = testWorld();
+    await addTimeOff(W.staffA1, at(TUE, "12:00"), at(TUE, "14:00"));
     const me = await newClient(deps, 1);
     expect(code(await book(deps, me, request("12:30")))).toBe("time_off");
     expect((await book(deps, me, request("14:00"))).ok).toBe(true);
@@ -135,14 +134,14 @@ describe("book", () => {
 
   describe("with an idempotency key", () => {
     it("returns the first answer for a retry and books once", async () => {
-      const { deps, db } = testWorld();
+      const { deps } = testWorld();
       const me = await newClient(deps, 1);
       const first = await book(deps, me, request("10:00", { idempotencyKey: "msg-1:0" }));
       const second = await book(deps, me, request("10:00", { idempotencyKey: "msg-1:0" }));
       expect(first.ok && second.ok).toBe(true);
       if (!first.ok || !second.ok) return;
       expect(second.value).toEqual(first.value);
-      expect(db.state.appointments).toHaveLength(1);
+      expect(await listMyAppointments(deps, me)).toHaveLength(1);
     });
 
     it("refuses the same key for a different request", async () => {
@@ -387,11 +386,12 @@ describe("listMyAppointments", () => {
   });
 
   it("is not able to read an appointment id of someone else", async () => {
-    const { deps, db } = testWorld();
+    const { deps } = testWorld();
     const a = await newClient(deps, 1);
     const b = await newClient(deps, 2);
-    await book(deps, a, request("10:00"));
-    const foreign = db.state.appointments[0]?.id as AppointmentId;
+    const mine = await book(deps, a, request("10:00"));
+    if (!mine.ok) throw new Error("unexpected");
+    const foreign = mine.value.id;
     expect(await deps.db.transaction(b, (tx) => tx.appointments.find(foreign))).toBeUndefined();
   });
 });

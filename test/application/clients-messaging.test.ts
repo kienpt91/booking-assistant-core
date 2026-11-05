@@ -6,7 +6,7 @@ import { holdSlot } from "../../src/application/booking.js";
 import type { ClientId, SalonId, ServiceId, StaffId } from "../../src/domain/ids.js";
 import { normalizePhone } from "../../src/domain/phone.js";
 import { DAY, MINUTE } from "../../src/domain/time/instant.js";
-import { at, newClient, testWorld } from "../support/deps.js";
+import { at, memoryWorld as testWorld, newClient } from "../support/deps.js";
 import { FakeChannel } from "../support/channel.js";
 import { W } from "../support/seed.js";
 

@@ -168,14 +168,19 @@ export class MemoryDatabase implements Database {
   readonly channels: ChannelDirectory;
   state: MemoryState = { clients: [], appointments: [], pending: [], idempotency: [], inbox: [], outbox: [], audit: [], conversation: [] };
   private tail: Promise<unknown> = Promise.resolve();
-  private readonly seed: MemorySeed;
+  private readonly seed: MemorySeed & { timeOff: Record<string, readonly Interval[]> };
 
   constructor(seed: MemorySeed = standardSeed()) {
-    this.seed = seed;
+    this.seed = { ...seed, timeOff: { ...seed.timeOff } };
     this.channels = {
       salonFor: async (channel, address) => seed.channels.find((c) => c.channel === channel && c.address === address)?.salonId,
       salonsWithChannels: async () => [...new Set(seed.channels.map((c) => c.salonId))],
     };
+  }
+
+  /** Marks a staff member as away for a stretch of time. */
+  addTimeOff(staffId: string, interval: Interval): void {
+    this.seed.timeOff[staffId] = [...(this.seed.timeOff[staffId] ?? []), interval];
   }
 
   async ping(): Promise<void> {}
