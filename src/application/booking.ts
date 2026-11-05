@@ -1,7 +1,7 @@
 import type { ClientActor, StaffActor } from "../domain/actor.js";
 import { systemOf } from "../domain/actor.js";
 import { checkSlot } from "../domain/availability.js";
-import { MAX_NOTES_LENGTH, type Appointment } from "../domain/appointment.js";
+import { isBlocking, MAX_NOTES_LENGTH, type Appointment } from "../domain/appointment.js";
 import { isBookingError } from "../domain/errors.js";
 import { asId, type AppointmentId, type ServiceId, type StaffId } from "../domain/ids.js";
 import { err } from "../domain/result.js";
@@ -136,6 +136,7 @@ export async function moveAppointment(deps: Deps, actor: ClientActor, request: M
       // the row is locked: a concurrent cancel or move waits here and this transaction sees its result
       const current = await tx.appointments.lock(request.appointmentId);
       if (!current) return refuse("not_found");
+      if (current.status !== "booked") return refuse("not_active");
       if (current.version !== (request.expectedVersion ?? seen.version)) return refuse("stale");
       const rule = checkMove(ctx.salon.policy, now, current, request.startsAt, "client");
       if (rule) return refuse(rule);
@@ -174,6 +175,7 @@ export async function cancelAppointment(deps: Deps, actor: ClientActor | StaffAc
     idempotent(tx, deps.hasher, now, request.idempotencyKey, { op: "cancel", id: request.appointmentId, v: request.expectedVersion ?? null }, async () => {
       const appointment = await tx.appointments.lock(request.appointmentId);
       if (!appointment) return refuse("not_found");
+      if (!isBlocking(appointment.status)) return refuse("not_active");
       if (request.expectedVersion !== undefined && appointment.version !== request.expectedVersion) return refuse("stale");
       const salon = await tx.catalog.getSalon();
       if (!salon) return refuse("not_found");

@@ -112,6 +112,17 @@ export function createRepositories(actor: Actor, db: Db): Tx {
     }
   }
 
+  /**
+   * Takes the transaction-scoped advisory locks of a client and a staff member, in that order, before a statement that can
+   * occupy time. The exclusion constraints stay the arbiter; the locks only keep two transactions that insert
+   * overlapping rows from waiting for each other's uncommitted rows (a deadlock that PostgreSQL resolves by aborting one,
+   * after a second). The later transaction waits here, then meets the committed row and is refused cleanly.
+   */
+  async function serialise(client: ClientId, staff: StaffId): Promise<void> {
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`booking:client:${client}`]);
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`booking:staff:${staff}`]);
+  }
+
   const catalog: CatalogRepository = {
     async getSalon(): Promise<Salon | undefined> {
       const r = (
@@ -175,6 +186,7 @@ export function createRepositories(actor: Actor, db: Db): Tx {
 
   const appointments: AppointmentRepository = {
     async insert(a: NewAppointment) {
+      await serialise(a.clientId, a.staffId);
       const r = await guarded(() =>
         rows(
           db,
@@ -208,6 +220,9 @@ export function createRepositories(actor: Actor, db: Db): Tx {
       ).map(toAppointment);
     },
     async reschedule(id: AppointmentId, c: Reschedule) {
+      const owner = (await rows(db, "SELECT client_id FROM appointments WHERE id = $1 AND salon_id = $2", [id, salonId]))[0];
+      if (!owner) throw new BookingError("not_found");
+      await serialise(asId<"ClientId">(text(owner["client_id"])), c.staffId);
       const s = scope(8);
       const r = await guarded(() =>
         rows(
