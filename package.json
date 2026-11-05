@@ -22,9 +22,11 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "booking-assistant-core": "dist/bin.js"
+  },
   "files": [
     "dist",
-    "!dist/demo",
     "migrations"
   ],
   "engines": {
@@ -36,7 +38,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "demo": "node dist/demo/main.js",
+    "start": "node dist/bin.js serve",
+    "migrate": "node dist/bin.js migrate",
+    "demo": "node dist/bin.js demo",
     "check:deps-age": "node scripts/check-dep-age.mjs"
   },
   "dependencies": {
