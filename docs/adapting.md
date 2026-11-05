@@ -48,7 +48,7 @@ The webhook server speaks a WhatsApp-Cloud-shaped body (`infrastructure/http/wha
 ## 6. Production readiness checklist
 
 - Create the login role with a password from your secret store (docs/deployment.md), run `migrate` as the schema owner, never run the service as the owner.
-- Generate `PII_KEY` and `PHONE_HASH_KEY` (`openssl rand -hex 32`), keep them in a secret manager, back them up separately from the database. Losing `PII_KEY` loses every number (the replies cannot be sent); changing `PHONE_HASH_KEY` makes every client look new.
+- Generate `PII_KEYS`, `MESSAGE_KEYS` and `PHONE_HASH_KEY` as three different keys (`openssl rand -hex 32` each), keep them in a secret manager, back them up separately from the database. Losing `PII_KEYS` loses every number and name (the replies cannot be sent); losing `MESSAGE_KEYS` loses the queued replies and the conversation window; changing `PHONE_HASH_KEY` makes every client look new.
 - Put TLS and a request limit in front of the webhook; do not trust `X-Forwarded-For` for the application's per-address limit.
 - Decide the retention periods (`DEFAULT_RETENTION` in `messaging.ts`) with the client and tell them what is stored.
 - Read `SECURITY.md` "What is not guaranteed" to the client.

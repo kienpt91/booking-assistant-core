@@ -45,7 +45,7 @@ Use `sslmode=verify-full` (and a CA file) in `DATABASE_URL` unless the database 
 
 ## Backups
 
-Back up the database with your provider's tooling and the two keys separately, to different places: a database backup without `PII_KEY` cannot be turned back into phone numbers, which is the point. Erasure (`eraseClientByPhone`) does not reach existing backups; keep their life short or document that a restored backup must be followed by the erasures made since (the audit log records each one with its date).
+Back up the database with your provider's tooling and the three keys separately, to different places: a database backup without `PII_KEYS` cannot be turned back into phone numbers, which is the point. Erasure (`eraseClientByPhone`) does not reach existing backups; keep their life short or document that a restored backup must be followed by the erasures made since (the audit log records each one with its date).
 
 ## Key rotation
 
