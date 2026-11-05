@@ -43,3 +43,10 @@ export function compose(config: CompositionConfig): Composed {
 export function throwawayKeys(): { piiKey: string; phoneHashKey: string } {
   return { piiKey: randomBytes(32).toString("hex"), phoneHashKey: randomBytes(32).toString("hex") };
 }
+
+export { createDemoDatabase, MIGRATIONS_DIR, type DemoDatabase } from "../infrastructure/postgres/demo-database.js";
+export { W as SAMPLE_IDS } from "../infrastructure/postgres/sample-data.js";
+export { ManualClock, uuidGenerator } from "../infrastructure/system.js";
+export { createWebhookServer } from "../infrastructure/http/server.js";
+export { signBody } from "../infrastructure/http/signature.js";
+export { readServeConfig, startServer, type Running, type ServeConfig } from "./serve.js";
