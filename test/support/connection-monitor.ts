@@ -16,7 +16,9 @@ export default async function setup(): Promise<() => Promise<void>> {
   const usable = limits.max - limits.reserved;
   if (usable < CONNECTION_BUDGET) {
     await monitor.end();
-    throw new Error(`the test server allows ${usable} connections (max_connections ${limits.max}, ${limits.reserved} reserved); the suite budget is ${CONNECTION_BUDGET}. Raise max_connections or lower CONNECTION_BUDGET in test/support/connection-budget.ts.`);
+    const message = `the test server allows ${usable} connections (max_connections ${limits.max}, ${limits.reserved} reserved); the suite budget is ${CONNECTION_BUDGET}. Raise max_connections or lower CONNECTION_BUDGET in test/support/connection-budget.ts.`;
+    console.error(`\nCONNECTION BUDGET: ${message}\n`);
+    throw new Error(message);
   }
   let peak = 0;
   let busy = false;
@@ -37,6 +39,10 @@ export default async function setup(): Promise<() => Promise<void>> {
     clearInterval(timer);
     await monitor.end();
     console.log(`postgres connections: peak ${peak} of ${usable} usable (max_connections ${limits.max}, suite budget ${CONNECTION_BUDGET})`);
-    if (peak > CONNECTION_BUDGET) throw new Error(`the suite used ${peak} connections at once; the budget is ${CONNECTION_BUDGET} (the CI service has ${usable})`);
+    if (peak > CONNECTION_BUDGET) {
+      const message = `the suite used ${peak} connections at once; the budget is ${CONNECTION_BUDGET} (the CI service has ${usable})`;
+      console.error(`\nCONNECTION BUDGET: ${message}\n`);
+      throw new Error(message);
+    }
   };
 }
