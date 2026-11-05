@@ -1,0 +1,10 @@
+export { compose, migrate, throwawayKeys, type Composed, type CompositionConfig } from "./composition/compose.js";
+export { book, cancelAppointment, confirmHold, holdSlot, listMyAppointments, moveAppointment, releaseHold } from "./application/booking.js";
+export { findAvailability } from "./application/availability.js";
+export { eraseClient, eraseClientByPhone, resolveClient } from "./application/clients.js";
+export { applyRetention, dispatchAll, dispatchOutbox, releaseExpiredHolds } from "./application/messaging.js";
+export { createRuntime, receiveMessage, type AssistantRuntime, type InboundMessage } from "./application/assistant/inbound.js";
+export { ScriptedModel, replyJson, toolJson } from "./application/assistant/fake-model.js";
+export type { AssistantModel, ModelRequest } from "./application/assistant/model.js";
+export { DEFAULT_POLICY_CONFIG, PolicyEngine } from "./application/assistant/policy.js";
+export { runHostileSuite, type HostileEnvironment, type HostileResult } from "./demo/hostile.js";
