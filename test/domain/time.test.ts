@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { addDays, compareCivil, daysBetween, formatCivilDate, isoWeekday, parseCivilDate } from "../../src/domain/time/civil.js";
 import { addMinutes, DAY, HOUR, MINUTE, overlaps } from "../../src/domain/time/instant.js";
 import {
+  formatIsoWithOffset,
   instantsAtWall,
   isValidZone,
   localDate,
@@ -147,5 +148,19 @@ describe("zones", () => {
     expect(wallOnDate(date, 9 * 60 + 5)).toEqual({ year: 2026, month: 12, day: 31, hour: 9, minute: 5 });
     expect(wallOnDate(date, 1440)).toEqual({ year: 2027, month: 1, day: 1, hour: 0, minute: 0 });
     expect(DAY).toBe(24 * HOUR);
+  });
+});
+
+describe("formatIsoWithOffset", () => {
+  it("writes the wall clock of the zone with its offset, across a clock change", () => {
+    expect(formatIsoWithOffset("Europe/London", utc(2026, 11, 10, 10, 0))).toBe("2026-11-10T10:00:00+00:00");
+    expect(formatIsoWithOffset("Europe/London", utc(2026, 6, 10, 9, 0))).toBe("2026-06-10T10:00:00+01:00");
+    expect(formatIsoWithOffset("Asia/Kolkata", utc(2026, 6, 10, 9, 0))).toBe("2026-06-10T14:30:00+05:30");
+    expect(formatIsoWithOffset("America/New_York", utc(2026, 1, 1, 3, 5))).toBe("2025-12-31T22:05:00-05:00");
+  });
+
+  it("round-trips through Date.parse", () => {
+    const at = utc(2026, 3, 8, 7, 30);
+    expect(Date.parse(formatIsoWithOffset("America/New_York", at))).toBe(at);
   });
 });

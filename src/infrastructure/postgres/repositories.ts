@@ -468,9 +468,14 @@ export function createRepositories(actor: Actor, db: Db): Tx {
         [e.id, salonId, e.clientId, at(e.occurredAt), e.messageId, e.step, e.event, e.tool, e.decision, [...e.reasons], e.args === null || e.args === undefined ? null : JSON.stringify(e.args), e.outcome],
       );
     },
-    async countExecuted(tools, since) {
-      const s = scope(3);
-      const r = await rows(db, `SELECT count(*)::int AS n FROM audit_log WHERE tool = ANY($1::text[]) AND occurred_at >= $2 AND ${s.sql} AND event = 'tool_executed' AND outcome = 'ok'`, [[...tools], at(since), ...s.values]);
+    async count(q) {
+      const s = scope(6);
+      const r = await rows(
+        db,
+        `SELECT count(*)::int AS n FROM audit_log
+         WHERE event = $1 AND tool = ANY($2::text[]) AND occurred_at >= $3 AND ($4::text IS NULL OR decision = $4::text) AND ($5::text IS NULL OR outcome = $5::text) AND ${s.sql}`,
+        [q.event, [...q.tools], at(q.since), q.decision ?? null, q.outcome ?? null, ...s.values],
+      );
       return Number(r[0]?.["n"] ?? 0);
     },
     async recent(limit) {

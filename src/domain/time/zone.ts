@@ -135,3 +135,13 @@ export function wallOnDate(date: CivilDate, minuteOfDay: number): WallTime {
   const minutes = minuteOfDay % 1440;
   return { ...day, hour: Math.floor(minutes / 60), minute: minutes % 60 };
 }
+
+/** An instant as ISO 8601 text in the zone, with its offset: "2026-11-10T10:00:00+00:00". The form the assistant tools exchange. */
+export function formatIsoWithOffset(zone: string, at: Instant): string {
+  const l = localDateTime(zone, at);
+  const offset = offsetMinutes(zone, at);
+  const sign = offset < 0 ? "-" : "+";
+  const abs = Math.abs(offset);
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return `${String(l.year).padStart(4, "0")}-${two(l.month)}-${two(l.day)}T${two(l.hour)}:${two(l.minute)}:${two(l.second)}${sign}${two(Math.floor(abs / 60))}:${two(abs % 60)}`;
+}

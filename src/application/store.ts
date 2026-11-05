@@ -213,10 +213,18 @@ export interface AuditEntry {
   readonly outcome: string | null;
 }
 
+export interface AuditCountQuery {
+  readonly event: AuditEvent;
+  readonly tools: readonly string[];
+  readonly since: Instant;
+  readonly decision?: AuditDecision;
+  readonly outcome?: string;
+}
+
 export interface AuditRepository {
   append(entry: AuditEntry): Promise<void>;
-  /** How many executed state-changing tool calls with outcome "ok" the actor's client has had since `since`. */
-  countExecuted(tools: readonly string[], since: Instant): Promise<number>;
+  /** How many audit entries match, for the actor's client (client actors) or the whole salon (staff and system): the basis of the daily quotas. */
+  count(query: AuditCountQuery): Promise<number>;
   /** Newest first. For the actor's client (client actors) or the whole salon (staff and system). */
   recent(limit: number): Promise<AuditEntry[]>;
 }

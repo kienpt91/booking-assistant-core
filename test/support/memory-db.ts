@@ -484,8 +484,17 @@ export class MemoryDatabase implements Database {
         if (actor.kind === "client" && entry.clientId !== actor.clientId) throw denied("row-level security");
         db.state.audit.push({ ...entry, salonId, args: JSON.parse(JSON.stringify(entry.args ?? null)) });
       },
-      async countExecuted(tools, since) {
-        return db.state.audit.filter((e) => own({ salonId: e.salonId, clientId: e.clientId }) && e.event === "tool_executed" && e.outcome === "ok" && e.tool !== null && tools.includes(e.tool) && e.occurredAt >= since).length;
+      async count(q) {
+        return db.state.audit.filter(
+          (e) =>
+            own({ salonId: e.salonId, clientId: e.clientId }) &&
+            e.event === q.event &&
+            e.tool !== null &&
+            q.tools.includes(e.tool) &&
+            e.occurredAt >= q.since &&
+            (q.decision === undefined || e.decision === q.decision) &&
+            (q.outcome === undefined || e.outcome === q.outcome),
+        ).length;
       },
       async recent(limit) {
         return db.state.audit
