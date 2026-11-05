@@ -7,8 +7,7 @@ database: PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1), a throwaway server with no
   -> exactly one booking survives; the control shows the race is real: without the constraint all 50 were booked.
 
 2. a move races a cancel of the same appointment, 30 times
-   1 x moved, then cancelled
-  29 x cancel first, move refused (not_active)
+  30 x cancel first, move refused (not_active)
   -> in every run the appointment ends cancelled and nothing is left booked.
 
 3. hostile conversations (a compromised model plus an attacker; the rules are in code, not in the prompt)

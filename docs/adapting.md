@@ -18,7 +18,7 @@ INSERT INTO time_off (salon_id, staff_id, during) VALUES (...);                 
 INSERT INTO salon_channels (channel, address, salon_id) VALUES ('whatsapp', '<the id the provider sends as the recipient>', '<salon id>');
 ```
 
-Run these as the schema owner (RLS does not apply to a superuser). `src/infrastructure/postgres/sample-data.ts` is the sample the tests use; replace it, do not load it.
+Every table has `FORCE ROW LEVEL SECURITY` and no policy names the schema owner, so a non-superuser owner can neither read nor write these tables. Do the first onboarding of a salon (`salons`, `staff`, `services`) once, in a session of a superuser or BYPASSRLS role that is not the service's login, and keep that role out of the application. After that a staff member can maintain the catalog as `booking_staff` with the salon claim set (see `test/support/pg.ts` `withClaims`). `src/infrastructure/postgres/sample-data.ts` is the sample the tests use (run as a superuser); replace it, do not load it.
 
 | The client is | Change |
 | --- | --- |

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased (review of 2026-11)
+
+- Webhook: the per-address limit is applied after the signature is verified; failed signatures never block a valid one; limits, body size, tolerance and a trusted-proxy depth are configurable from the environment.
+- Reply and conversation text is encrypted with a second key; every encrypted value is bound to its table, column, salon and row id; keys are rings with ids, parsed strictly; the phone hash is separated by salon. (Format `v2`; the database layout of `outbox_messages` and `conversation_turns` changed in migration 0005 before any release.)
+- Appointment notes are masked at write time; `model` and `relay` URLs must be https; the model response is size-capped; numbers with a `(0)` trunk digit are refused.
+- Inbox claims have an owner token and an attempt limit; an erasure that commits while a message is being answered wins; holds are keyed by a digest.
+- The demo only runs against a loopback server and never alters an existing role. The policy rule that could never fire was removed.
+
 ## 0.1.0
 
 First release.

@@ -23,8 +23,7 @@ database: PostgreSQL 16.14 (Debian 16.14-1.pgdg13+1), a throwaway server with no
   -> exactly one booking survives; the control shows the race is real: without the constraint all 50 were booked.
 
 2. a move races a cancel of the same appointment, 30 times
-   1 x moved, then cancelled
-  29 x cancel first, move refused (not_active)
+  30 x cancel first, move refused (not_active)
   -> in every run the appointment ends cancelled and nothing is left booked.
 
 3. hostile conversations (a compromised model plus an attacker; the rules are in code, not in the prompt)
@@ -133,33 +132,37 @@ Decisions, with their trade-offs: [0001 layers](docs/adr/0001-layers-and-the-dep
 
 ## What was verified, and how
 
-All numbers come from runs of the final tree in fresh containers (Node 24.14.1, PostgreSQL 16.14 pinned by digest, no network after the install).
+All numbers come from runs of the final tree in fresh containers (the dependency volume was removed first; Node 24.14.1, PostgreSQL 16.14 pinned by digest, no network after the install).
 
 | Run | Files | Tests | Result |
 | --- | --- | --- | --- |
-| `npm run coverage` (default, no database) | 13 | 380 | passed, thresholds met |
-| `scripts/integration.sh` (everything, PostgreSQL included) | 21 | 532 | passed, thresholds met |
+| `npm run coverage` (default, no database) | 14 | 398 | passed, thresholds met |
+| `scripts/integration.sh` (everything, PostgreSQL included) | 23 | 556 | passed, thresholds met |
 | `scripts/demo.sh` | | | exit 0, "every claim held" |
 
-Tests per layer: domain 128, application with the in-memory double 145 (booking use cases 38, clients and messaging 17, assistant core 62, conversations 26, hostile suite 2), infrastructure without a database 36 (crypto, logger, webhook server, adapters, composition), architecture 71, PostgreSQL only 152 (schema 15, row level security 36, booking scenarios 38, conversation scenarios 26, hostile suite 1 covering 16 scenarios, concurrency 16, adapter 19, real server 1). The booking and conversation scenarios run on the in-memory double **and** on PostgreSQL, so the double is only trusted because both agree.
+158 of the tests need a database (row level security 36, schema 15, concurrency 16, adapter 19, the booking and conversation scenarios run again on PostgreSQL, the hostile suite, the real server, the demo database). The booking and conversation scenarios run on the in-memory double **and** on PostgreSQL, so the double is only trusted because both agree.
 
 Coverage (lines / statements), thresholds domain >= 95, application >= 90, overall >= 85, enforced in both runs:
 
 | | default run | with PostgreSQL |
 | --- | --- | --- |
-| overall | 96.65 / 94.28 | 94.31 / 92.41 |
+| overall | 96.86 / 94.52 | 96.59 / 94.45 |
 | `src/domain` | 100 / 99.00 | 100 / 99.00 |
-| `src/application` | 98.00 / 95.33 (top level), 95.73 / 92.70 (assistant) | 99.00 / 96.88 (top level), 95.73 / 92.70 (assistant) |
-| `src/infrastructure/postgres` | not measured without a database | 84.48 / 83.58 |
+| `src/application` (top level) | 98.07 / 95.45 | 99.03 / 96.96 |
+| `src/application/assistant` | 95.88 / 92.93 | 95.88 / 92.93 |
+| `src/composition` | measured | 96.07 / 93.15 |
+| `src/infrastructure` (crypto, http, model) | measured | 100 / 98.70 |
+| `src/infrastructure/postgres` | not measured without a database | 95.25 / 93.98 |
 
-Also run: release script tests (29 checks), secret scan on the tree and the full history (clean), dependency age check (90 locked packages, none newer than 2026-10-24).
+Also run: release script tests (29 checks), secret scan on the tree and the full history (clean), dependency age check (90 locked packages, none newer than 2026-10-24). An independent read-only review (2026-11) produced 11 findings; the ones fixed and the ones left are in the CHANGELOG ("Unreleased") and in SECURITY.md "What is not guaranteed".
 
 ## What is not verified
 
 - Never run against a hosted model, a real chat provider or the real WhatsApp API. The payload shape is from public documentation; the model adapter and the relay adapter ran only against fake HTTP servers.
 - PostgreSQL 16.14 and Node 24.14.1 only. The CI workflows were written but have not been run on GitHub (they are modelled on the sibling repositories, whose workflows have).
 - The Arabic text has had no native-speaker review. Time zone rules are tested for New York, London, Lord Howe and Kolkata only.
-- Free text is not encrypted (SECURITY.md, ADR 0006). The injection heuristics are regular expressions used only for the audit trail.
+- Appointment notes are free text (masked for numbers and addresses, not encrypted); the prompt sends the client's name, messages and notes to the model provider unredacted (SECURITY.md). The injection heuristics are regular expressions used only for the audit trail.
+- Not done after the review: a separate retention role so that the system role cannot delete audit rows; a secret per webhook channel (one secret is one trust domain); an entropy check of webhook secrets.
 - No load test beyond 50 racing clients; the in-process rate limits are per instance.
 
 ## Dependencies
