@@ -35,3 +35,24 @@ export class JsonLogger implements Logger {
     this.write(JSON.stringify({ ...(redactValue(fields ?? {}) as Record<string, unknown>), ts: new Date(this.clock.now()).toISOString(), level, event }));
   }
 }
+
+/** A clock that only moves when told to: for tests and the demo, where a booking window has to be reached without waiting. */
+export class ManualClock implements Clock {
+  private t: number;
+
+  constructor(start: number) {
+    this.t = start;
+  }
+
+  now(): number {
+    return this.t;
+  }
+
+  set(t: number): void {
+    this.t = t;
+  }
+
+  advance(ms: number): void {
+    this.t += ms;
+  }
+}

@@ -482,6 +482,7 @@ export class MemoryDatabase implements Database {
     const audit: AuditRepository = {
       async append(entry) {
         if (actor.kind === "client" && entry.clientId !== actor.clientId) throw denied("row-level security");
+        if (db.state.audit.some((e) => e.id === entry.id)) return;
         db.state.audit.push({ ...entry, salonId, args: JSON.parse(JSON.stringify(entry.args ?? null)) });
       },
       async count(q) {

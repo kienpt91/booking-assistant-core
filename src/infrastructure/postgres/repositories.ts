@@ -464,7 +464,7 @@ export function createRepositories(actor: Actor, db: Db): Tx {
       await run(
         db,
         `INSERT INTO audit_log (id, salon_id, client_id, occurred_at, message_id, step, event, tool, decision, reasons, args, outcome)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], $11::jsonb, $12)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], $11::jsonb, $12) ON CONFLICT (id) DO NOTHING`,
         [e.id, salonId, e.clientId, at(e.occurredAt), e.messageId, e.step, e.event, e.tool, e.decision, [...e.reasons], e.args === null || e.args === undefined ? null : JSON.stringify(e.args), e.outcome],
       );
     },
