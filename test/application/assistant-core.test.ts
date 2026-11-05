@@ -195,7 +195,7 @@ describe("SlidingWindowLimiter", () => {
 
 describe("PolicyEngine", () => {
   const client: Actor = { kind: "client", salonId: "a0000000-0000-4000-8000-000000000001" as SalonId, clientId: "c1000000-0000-4000-8000-000000000001" as ClientId };
-  const facts: PolicyFacts = { ownsAppointment: true, executedToday: 0, proposedToday: 0, proposalsThisMessage: 0 };
+  const facts: PolicyFacts = { ownsAppointment: true, executedToday: 0, proposedToday: 0 };
   const call = (tool: ToolCall["tool"], args: Record<string, unknown>): ToolCall => {
     const parsed = parseToolCall(tool, args);
     if (!parsed.ok) throw new Error("bad test call");
@@ -271,15 +271,6 @@ describe("PolicyEngine", () => {
     }
   });
 
-  it("refuses a second state-changing proposal for the same message (no bulk operations)", () => {
-    const engine = new PolicyEngine();
-    for (const c of [bookCall, moveCall, cancelCall]) {
-      expect(engine.evaluate(request({ call: c, facts: { ...facts, proposalsThisMessage: 1 } }))).toEqual({ effect: "deny", reasons: ["bulk_refused"] });
-    }
-    // reads are not state changes
-    expect(engine.evaluate(request({ call: search, facts: { ...facts, proposalsThisMessage: 1 } })).effect).toBe("allow");
-  });
-
   it("applies the daily quotas to proposals and to executed changes", () => {
     const engine = new PolicyEngine({ ...DEFAULT_POLICY_CONFIG, stateChangesPerDay: 2, proposalsPerDay: 3 });
     expect(engine.evaluate(request({ call: bookCall, facts: { ...facts, executedToday: 1, proposedToday: 2 } })).effect).toBe("confirm");
@@ -292,16 +283,16 @@ describe("PolicyEngine", () => {
 
   it("collects every reason when several rules fail", () => {
     const engine = new PolicyEngine();
-    const out = engine.evaluate(request({ call: moveCall, facts: { ownsAppointment: false, executedToday: 99, proposedToday: 99, proposalsThisMessage: 1 } }));
+    const out = engine.evaluate(request({ call: moveCall, facts: { ownsAppointment: false, executedToday: 99, proposedToday: 99 } }));
     expect(out.effect).toBe("deny");
-    expect([...out.reasons].sort()).toEqual(["bulk_refused", "daily_quota", "not_found", "proposal_quota"]);
+    expect([...out.reasons].sort()).toEqual(["daily_quota", "not_found", "proposal_quota"]);
   });
 
   it("never allows a state change straight from the model, whatever the facts", () => {
     const engine = new PolicyEngine({ ...DEFAULT_POLICY_CONFIG, toolCallsPerMinute: 10_000 });
     for (let i = 0; i < 200; i++) {
       const c = [bookCall, moveCall, cancelCall][i % 3] as ToolCall;
-      const f: PolicyFacts = { ownsAppointment: i % 2 === 0, executedToday: i % 7, proposedToday: i % 5, proposalsThisMessage: i % 3 };
+      const f: PolicyFacts = { ownsAppointment: i % 2 === 0, executedToday: i % 7, proposedToday: i % 5 };
       expect(engine.evaluate(request({ call: c, facts: f, now: NOW + i })).effect).not.toBe("allow");
     }
   });

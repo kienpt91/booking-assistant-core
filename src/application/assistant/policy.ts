@@ -38,7 +38,6 @@ export type PolicyReason =
   | "time_out_of_range"
   | "note_too_long"
   | "not_found"
-  | "bulk_refused"
   | "daily_quota"
   | "proposal_quota";
 
@@ -53,8 +52,6 @@ export interface PolicyFacts {
   readonly ownsAppointment: boolean | undefined;
   readonly executedToday: number;
   readonly proposedToday: number;
-  /** state-changing proposals already made while answering the current message */
-  readonly proposalsThisMessage: number;
 }
 
 export interface PolicyRequest {
@@ -73,7 +70,8 @@ export interface PolicyRequest {
  *   2. rate: too many calls in a minute, deny
  *   3. arguments: ranges, horizons and sizes, deny when outside
  *   4. ownership: move and cancel only for an appointment the acting client owns (a stranger's id looks like a missing one)
- *   5. state changes: one proposal per message (no bulk), a daily number of proposals and of executed changes
+ *   5. state changes: a daily number of proposals and of executed changes. One proposal per message is structural: the turn loop
+ *      (turn.ts) ends at the first proposal, so a message can never lead to more than one change
  *   6. effect: a read is allowed, a state change is never allowed straight from the model: it needs the client's confirmation
  * Every deny carries its reasons; an allow or confirm is only given when there are none.
  */
@@ -115,7 +113,6 @@ export class PolicyEngine {
     }
 
     if (TOOLS[call.tool].effect === "write") {
-      if (phase === "propose" && facts.proposalsThisMessage >= 1) reasons.push("bulk_refused");
       if (phase === "propose" && facts.proposedToday >= config.proposalsPerDay) reasons.push("proposal_quota");
       if (facts.executedToday >= config.stateChangesPerDay) reasons.push("daily_quota");
     }

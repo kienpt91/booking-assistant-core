@@ -92,7 +92,7 @@ async function handleToolCall(ctx: ConversationContext, step: number, tool: unkn
   }
 
   const call = parsed.value;
-  const { facts, appointment } = await gatherFacts(ctx, call, 0);
+  const { facts, appointment } = await gatherFacts(ctx, call);
   const decision = ctx.policy.evaluate({ actor: ctx.client, call, phase: "propose", now: ctx.deps.clock.now(), facts });
   await record(ctx, { step, event: "tool_call", tool: call.tool, decision: decision.effect, reasons: decision.reasons, args });
 
@@ -100,7 +100,7 @@ async function handleToolCall(ctx: ConversationContext, step: number, tool: unkn
     // limits are the application's to announce, in its own words; the model is not asked to talk around them
     if (decision.reasons.includes("daily_quota") || decision.reasons.includes("proposal_quota")) return { kind: "final", result: { reply: say.refusal(language, "quota_exceeded"), kind: "refused" } };
     if (decision.reasons.includes("rate_limited")) return { kind: "final", result: { reply: say.tooManyMessages(language), kind: "refused" } };
-    if (decision.reasons.includes("bulk_refused") || decision.reasons.includes("role_not_allowed")) return { kind: "final", result: { reply: say.notAllowed(language), kind: "refused" } };
+    if (decision.reasons.includes("role_not_allowed")) return { kind: "final", result: { reply: say.notAllowed(language), kind: "refused" } };
     // a wrong argument or an unknown appointment: the model is told, and may correct itself once
     const reason = decision.reasons[0] ?? "not_allowed";
     return { kind: "continue", denied: true, messages: [echoed, toolResultMessage(call.tool, { error: reason === "not_found" ? "not_found" : "not_allowed", reason })] };
@@ -177,7 +177,8 @@ async function propose(ctx: ConversationContext, step: number, call: ToolCall, a
       staffId: staff.id,
       startsAt: call.args.starts_at,
       notes: call.args.notes,
-      idempotencyKey: `${ctx.messageId}:${step}:hold`,
+      // a digest: the message id may be up to 200 characters, and the key is limited to 200 including its prefix
+      idempotencyKey: `hold:${deps.hasher.digest(`${ctx.messageId}:${step}`)}`,
     });
     if (!hold.ok) return refuse(hold.error.code);
     holdAppointmentId = hold.value.id;

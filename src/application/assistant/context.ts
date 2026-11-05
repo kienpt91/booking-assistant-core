@@ -77,13 +77,13 @@ export interface GatheredFacts {
 }
 
 /** The facts the policy needs, read from the database under the client's own identity (a stranger's appointment is simply not found). */
-export async function gatherFacts(ctx: ConversationContext, call: ToolCall, proposalsThisMessage: number): Promise<GatheredFacts> {
+export async function gatherFacts(ctx: ConversationContext, call: ToolCall): Promise<GatheredFacts> {
   const since = ctx.deps.clock.now() - DAY;
   return ctx.deps.db.transaction(ctx.client, async (tx) => {
     const appointment = call.tool === "move" || call.tool === "cancel" ? await tx.appointments.find(asId<"AppointmentId">(call.args.appointment_id)) : undefined;
     const executedToday = await tx.audit.count({ event: "tool_executed", tools: WRITE_TOOLS, outcome: "ok", since });
     const proposedToday = await tx.audit.count({ event: "tool_call", tools: WRITE_TOOLS, decision: "confirm", since });
     const ownsAppointment = call.tool === "move" || call.tool === "cancel" ? appointment !== undefined : undefined;
-    return { facts: { ownsAppointment, executedToday, proposedToday, proposalsThisMessage }, appointment };
+    return { facts: { ownsAppointment, executedToday, proposedToday }, appointment };
   });
 }

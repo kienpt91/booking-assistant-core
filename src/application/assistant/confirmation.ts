@@ -55,7 +55,7 @@ export async function confirmPending(ctx: ConversationContext, pending: PendingA
   if (!stored) return failed(["stored_arguments_invalid"]);
   const { call, expectedVersion } = stored;
 
-  const { facts } = await gatherFacts(ctx, call, 0);
+  const { facts } = await gatherFacts(ctx, call);
   const decision = ctx.policy.evaluate({ actor: ctx.client, call, phase: "execute", now: deps.clock.now(), facts });
   await record(ctx, { step, event: "confirmation", tool: pending.tool, decision: decision.effect, reasons: decision.reasons });
   if (decision.effect !== "allow") {

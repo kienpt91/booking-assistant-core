@@ -7,6 +7,7 @@ import { asId, type AppointmentId, type ServiceId, type StaffId } from "../domai
 import { err } from "../domain/result.js";
 import { checkCancel, checkMove } from "../domain/rules.js";
 import { DAY, MINUTE, type Instant } from "../domain/time/instant.js";
+import { redactText } from "../domain/pii.js";
 import { sanitizeUntrusted } from "../domain/untrusted-text.js";
 import { idempotent } from "./idempotency.js";
 import { refuse, succeed, type Outcome } from "./outcome.js";
@@ -24,7 +25,8 @@ export interface BookRequest {
 
 function cleanNotes(notes: string | undefined): string | null {
   if (notes === undefined) return null;
-  const text = sanitizeUntrusted(notes, MAX_NOTES_LENGTH).text;
+  // masked at write time: phone numbers, e-mail addresses and card-like numbers never reach the table, the stored answer of a retry or the model
+  const text = redactText(sanitizeUntrusted(notes, MAX_NOTES_LENGTH).text);
   return text === "" ? null : text;
 }
 

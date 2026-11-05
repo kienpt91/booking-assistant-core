@@ -121,6 +121,18 @@ describe("book", () => {
     expect((await book(deps, me, request("14:00"))).ok).toBe(true);
   });
 
+  it("masks phone numbers, e-mail addresses and card numbers in the notes, in the stored appointment and in the stored answer of a retry (review finding)", async () => {
+    const { deps } = testWorld();
+    const me = await newClient(deps, 1);
+    const input = request("10:00", { notes: "call me on +966 50 123 4567 or sara@example.com, card 4242 4242 4242 4242", idempotencyKey: "notes-1" });
+    const first = await book(deps, me, input);
+    const replay = await book(deps, me, input);
+    if (!first.ok || !replay.ok) throw new Error("unexpected");
+    expect(first.value.notes).toBe("call me on [phone] or [email], card [card]");
+    expect(replay.value.notes).toBe(first.value.notes);
+    expect(JSON.stringify(await listMyAppointments(deps, me))).not.toMatch(/966|sara@|4242/);
+  });
+
   it("cleans the notes the client wrote", async () => {
     const { deps } = testWorld();
     const me = await newClient(deps, 1);
