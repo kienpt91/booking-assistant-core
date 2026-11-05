@@ -50,6 +50,8 @@ CREATE INDEX conversation_turns_client_idx ON conversation_turns (client_id, id 
 -- redaction (see src/domain/pii.ts), never free text and never a phone number. Append-only for the application roles.
 CREATE TABLE audit_log (
   id uuid PRIMARY KEY,
+  -- arrival order: several entries of one request share a timestamp
+  seq bigint GENERATED ALWAYS AS IDENTITY,
   salon_id uuid NOT NULL REFERENCES salons (id),
   client_id uuid,
   occurred_at timestamptz NOT NULL,
