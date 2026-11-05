@@ -97,6 +97,11 @@ async function handleToolCall(ctx: ConversationContext, step: number, tool: unkn
   await record(ctx, { step, event: "tool_call", tool: call.tool, decision: decision.effect, reasons: decision.reasons, args });
 
   if (decision.effect === "deny") {
+    // limits are the application's to announce, in its own words; the model is not asked to talk around them
+    if (decision.reasons.includes("daily_quota") || decision.reasons.includes("proposal_quota")) return { kind: "final", result: { reply: say.refusal(language, "quota_exceeded"), kind: "refused" } };
+    if (decision.reasons.includes("rate_limited")) return { kind: "final", result: { reply: say.tooManyMessages(language), kind: "refused" } };
+    if (decision.reasons.includes("bulk_refused") || decision.reasons.includes("role_not_allowed")) return { kind: "final", result: { reply: say.notAllowed(language), kind: "refused" } };
+    // a wrong argument or an unknown appointment: the model is told, and may correct itself once
     const reason = decision.reasons[0] ?? "not_allowed";
     return { kind: "continue", denied: true, messages: [echoed, toolResultMessage(call.tool, { error: reason === "not_found" ? "not_found" : "not_allowed", reason })] };
   }
