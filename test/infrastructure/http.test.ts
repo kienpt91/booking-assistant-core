@@ -160,7 +160,7 @@ describe("webhook server", () => {
     const statuses: number[] = [];
     for (let i = 0; i < 5; i++) statuses.push((await s.post(payload({ id: `m${i}` }))).status);
     expect(statuses).toEqual([200, 200, 200, 429, 429]);
-    expect((await s.post(payload(), { "x-signature": "" })).headers.get("retry-after")).toBe("60");
+    expect((await s.post(payload({ id: "again" }))).headers.get("retry-after")).toBe("60");
     s.clock.advance(61_000);
     expect((await s.post(payload({ id: "later" }))).status).toBe(200);
   });

@@ -23,6 +23,10 @@ export async function startServer(config: ServeConfig, write: (line: string) => 
     handler: { receive: (message) => receiveMessage(deps, runtime, message), ready: () => deps.db.ping() },
     clock: deps.clock,
     logger: deps.logger,
+    requestsPerMinute: config.requestsPerMinute,
+    maxBodyBytes: config.maxBodyBytes,
+    toleranceMs: config.toleranceMs,
+    trustedProxyHops: config.trustedProxyHops,
   });
   const every = (ms: number, job: () => Promise<unknown>, name: string): NodeJS.Timeout =>
     setInterval(() => void job().catch((error: unknown) => deps.logger.error("job.failed", { job: name, error: error instanceof Error ? error.name : "unknown" })), ms).unref();

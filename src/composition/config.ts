@@ -1,3 +1,4 @@
+/** Configuration of `serve`, read from the environment. */
 export interface ServeConfig {
   readonly databaseUrl: string;
   readonly piiKey: string;
@@ -12,9 +13,36 @@ export interface ServeConfig {
   readonly relayUrl: string;
   readonly relayToken: string;
   readonly defaultCountryCode: string | undefined;
+  /** authenticated webhook requests per sender address per minute */
+  readonly requestsPerMinute: number;
+  readonly maxBodyBytes: number;
+  readonly toleranceMs: number;
+  /** reverse proxies in front of the server that append to X-Forwarded-For; 0 ignores the header */
+  readonly trustedProxyHops: number;
 }
 
 const REQUIRED = ["DATABASE_URL", "PII_KEY", "PHONE_HASH_KEY", "WEBHOOK_SECRETS", "MODEL_BASE_URL", "MODEL_API_KEY", "MODEL_NAME", "RELAY_URL", "RELAY_TOKEN"] as const;
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/** https, or http on this machine only: the bearer tokens, the numbers and the conversation travel over these URLs. */
+function httpsUrl(name: string, value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${name} must be an https URL`);
+  }
+  if (url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname))) return value;
+  throw new Error(`${name} must be an https URL (plain http is accepted for localhost only)`);
+}
+
+function integer(env: Readonly<Record<string, string | undefined>>, name: string, fallback: number, min: number, max: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be a whole number from ${min} to ${max}`);
+  return n;
+}
 
 /** Reads the configuration of `serve` from the environment. A missing variable is named; no value is ever printed. */
 export function readServeConfig(env: Readonly<Record<string, string | undefined>>): ServeConfig {
@@ -33,12 +61,15 @@ export function readServeConfig(env: Readonly<Record<string, string | undefined>
     channel: env["CHANNEL"] ?? "whatsapp",
     host: env["HOST"] ?? "127.0.0.1",
     port,
-    modelBaseUrl: get("MODEL_BASE_URL"),
+    modelBaseUrl: httpsUrl("MODEL_BASE_URL", get("MODEL_BASE_URL")),
     modelApiKey: get("MODEL_API_KEY"),
     modelName: get("MODEL_NAME"),
-    relayUrl: get("RELAY_URL"),
+    relayUrl: httpsUrl("RELAY_URL", get("RELAY_URL")),
     relayToken: get("RELAY_TOKEN"),
     defaultCountryCode: env["DEFAULT_COUNTRY_CODE"],
+    requestsPerMinute: integer(env, "WEBHOOK_REQUESTS_PER_MINUTE", 600, 1, 100_000),
+    maxBodyBytes: integer(env, "WEBHOOK_MAX_BODY_BYTES", 65_536, 1_024, 1_048_576),
+    toleranceMs: integer(env, "WEBHOOK_TOLERANCE_SECONDS", 300, 5, 3_600) * 1000,
+    trustedProxyHops: integer(env, "TRUSTED_PROXY_HOPS", 0, 0, 3),
   };
 }
-

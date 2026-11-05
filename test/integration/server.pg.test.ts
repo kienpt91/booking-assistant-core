@@ -54,7 +54,7 @@ describe("the real server, wired from configuration, over PostgreSQL", () => {
     const keys = throwawayKeys();
     const lines: string[] = [];
     const running = await startServer(
-      { databaseUrl: backend.appUrl, ...keys, webhookSecrets: [SECRET], channel: "chat", host: "127.0.0.1", port: 0, modelBaseUrl: model.url, modelApiKey: "k", modelName: "m", relayUrl: relay.url, relayToken: "t", defaultCountryCode: undefined },
+      { databaseUrl: backend.appUrl, ...keys, webhookSecrets: [SECRET], channel: "chat", host: "127.0.0.1", port: 0, modelBaseUrl: model.url, modelApiKey: "k", modelName: "m", relayUrl: relay.url, relayToken: "t", defaultCountryCode: undefined, requestsPerMinute: 600, maxBodyBytes: 65_536, toleranceMs: 300_000, trustedProxyHops: 0 },
       (line) => lines.push(line),
     );
     try {

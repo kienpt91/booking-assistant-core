@@ -5,7 +5,6 @@ import { redactText, redactValue } from "../../src/domain/pii.js";
 describe("normalizePhone", () => {
   it.each([
     ["+44 7700 900123", undefined, "+447700900123"],
-    ["+44 (0) 7700-900-123", undefined, "+4407700900123"],
     ["0044 7700 900123", undefined, "+447700900123"],
     ["+٩٦٦ ٥٠ ١٢٣ ٤٥٦٧", undefined, "+966501234567"],
     ["+۹۶۶ ۵۰ ۱۲۳ ۴۵۶۷", undefined, "+966501234567"],
@@ -30,6 +29,7 @@ describe("normalizePhone", () => {
     ["+44 7700 900123 ext 5", undefined],
     ["+44;7700900123", undefined],
     ["'+447700900123'; drop table clients;--", undefined],
+    ["+44 (0) 7700-900-123", undefined],
     ["+".padEnd(60, "1"), undefined],
   ])("refuses %s", (raw, cc) => {
     expect(normalizePhone(raw, cc)).toBeUndefined();

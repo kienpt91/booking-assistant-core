@@ -16,6 +16,9 @@ const DIGITS = /^[1-9][0-9]{7,14}$/;
  */
 export function normalizePhone(raw: unknown, defaultCountryCode?: string): E164 | undefined {
   if (typeof raw !== "string" || raw.length === 0 || raw.length > 40) return undefined;
+  // "+44 (0) 7700 ..." writes the trunk digit that the international form drops. Which digit that is depends on the country, so the
+  // number is refused rather than turned into a second client for the same person.
+  if (/\(\s*0\s*\)/.test(raw)) return undefined;
   const text = raw
     .normalize("NFKC")
     .replace(FORMAT_AND_SPACING, "")

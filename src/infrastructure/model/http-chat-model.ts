@@ -1,5 +1,26 @@
 import type { AssistantModel, ModelRequest } from "../../application/assistant/model.js";
 
+const MAX_RESPONSE_BYTES = 256 * 1024;
+
+/** Reads a response body as text and refuses one bigger than `limit` without reading the rest. */
+async function readLimited(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new Error("model response too large");
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+}
+
 export interface HttpChatModelOptions {
   /** base URL of an HTTP chat API that accepts `POST {baseUrl}/chat/completions` with messages and returns `choices[0].message.content` */
   readonly baseUrl: string;
@@ -39,7 +60,7 @@ export class HttpChatModel implements AssistantModel {
       redirect: "error",
     });
     if (!response.ok) throw new Error(`model request failed with status ${response.status}`);
-    const json: unknown = await response.json();
+    const json: unknown = JSON.parse(await readLimited(response, MAX_RESPONSE_BYTES));
     const content = typeof json === "object" && json !== null && "choices" in json && Array.isArray(json.choices) ? (json.choices[0] as { message?: { content?: unknown } } | undefined)?.message?.content : undefined;
     if (typeof content !== "string") throw new Error("model response had no text");
     return content;

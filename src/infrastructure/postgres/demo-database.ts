@@ -8,7 +8,7 @@ export const MIGRATIONS_DIR = fileURLToPath(new URL("../../../migrations", impor
 
 export interface DemoDatabase {
   readonly name: string;
-  /** connection string of the application's own login role: what `compose` takes as `databaseUrl` */
+  /** connection string of a login role made for this run alone: what `compose` takes as `databaseUrl` */
   readonly appUrl: string;
   readonly serverVersion: string;
   /** empties every table the application writes to; keeps the sample salons */
@@ -23,6 +23,25 @@ export interface DemoDatabase {
   drop(): Promise<void>;
 }
 
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * The demo creates databases and roles and runs the migrations (which create the cluster-wide application roles) with a superuser
+ * connection. It therefore only talks to a server on this machine: a loopback address or a unix socket directory. The scripts
+ * start a throwaway container whose network is the demo's own; there is no switch to point it elsewhere.
+ */
+export function assertThrowawayServer(serverAdminUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(serverAdminUrl);
+  } catch {
+    throw new Error("the demo server URL is not a valid URL");
+  }
+  const socket = url.searchParams.get("host");
+  const local = LOOPBACK.has(url.hostname) || (url.hostname === "" && socket !== null && socket.startsWith("/")) || (socket !== null && socket.startsWith("/") && url.hostname === "");
+  if (!local) throw new Error("the demo only runs against a server on loopback or a unix socket: it creates roles and databases as a superuser");
+}
+
 function withUser(url: string, database: string, user?: string, password?: string): string {
   const u = new URL(url);
   u.pathname = `/${database}`;
@@ -32,12 +51,15 @@ function withUser(url: string, database: string, user?: string, password?: strin
 }
 
 /**
- * Creates a scratch database on a server you started for the purpose (the demo script starts a container with no network),
- * applies the migrations, loads the sample salons and creates the unprivileged login role the application uses. `serverAdminUrl`
- * is a superuser URL of that throwaway server: never give this function the address of a real database.
+ * Creates a scratch database on a throwaway server, applies the migrations, loads the sample salons and creates a login role
+ * with a name made for this run (never an existing role: nothing here alters a role that was there before). `drop` removes the
+ * database and the role.
  */
 export async function createDemoDatabase(serverAdminUrl: string): Promise<DemoDatabase> {
-  const name = `demo_${randomBytes(5).toString("hex")}`;
+  assertThrowawayServer(serverAdminUrl);
+  const suffix = randomBytes(5).toString("hex");
+  const name = `demo_${suffix}`;
+  const role = `booking_demo_${suffix}`;
   const password = randomBytes(16).toString("hex");
   const server = new pg.Client({ connectionString: serverAdminUrl });
   await server.connect();
@@ -61,13 +83,12 @@ export async function createDemoDatabase(serverAdminUrl: string): Promise<DemoDa
   };
   await admin(async (c) => {
     await seedWorld(c);
-    await c.query(`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'booking_app') THEN CREATE ROLE booking_app LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT; END IF; END $$`);
-    await c.query(`ALTER ROLE booking_app PASSWORD '${password}'`);
-    await c.query("GRANT booking_client, booking_staff, booking_system TO booking_app");
+    await c.query(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT PASSWORD '${password}'`);
+    await c.query(`GRANT booking_client, booking_staff, booking_system TO ${role}`);
   });
   return {
     name,
-    appUrl: withUser(serverAdminUrl, name, "booking_app", password),
+    appUrl: withUser(serverAdminUrl, name, role, password),
     serverVersion,
     reset: () =>
       admin(async (c) => {
@@ -91,6 +112,7 @@ export async function createDemoDatabase(serverAdminUrl: string): Promise<DemoDa
       await s.connect();
       try {
         await s.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+        await s.query(`DROP ROLE IF EXISTS ${role}`);
       } finally {
         await s.end();
       }

@@ -21,8 +21,15 @@ export interface WebhookServerOptions {
   readonly logger: Logger;
   readonly maxBodyBytes?: number;
   readonly toleranceMs?: number;
-  /** requests per client address per minute, before anything is read */
+  /** AUTHENTICATED requests per sender address per minute (default 600). Applied after the signature is verified. */
   readonly requestsPerMinute?: number;
+  /** failed authentications per address per minute before the answer turns from 401 into 429 and the log goes quiet (default 30). It never blocks a valid signature. */
+  readonly failuresPerMinute?: number;
+  /**
+   * How many reverse proxies sit in front of this server and append to X-Forwarded-For (default 0: the header is ignored).
+   * With n > 0 the sender address is the n-th entry from the right, the one the proxy nearest to us wrote.
+   */
+  readonly trustedProxyHops?: number;
 }
 
 const JSON_HEADERS = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" } as const;
@@ -52,16 +59,31 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer | un
   return promise;
 }
 
+/** The address a request is counted under: the socket's, or with `hops` trusted proxies the entry the nearest one added to X-Forwarded-For. */
+export function senderAddress(req: http.IncomingMessage, hops: number): string {
+  const socket = req.socket.remoteAddress ?? "unknown";
+  if (hops <= 0) return socket;
+  const header = req.headers["x-forwarded-for"];
+  const parts = (Array.isArray(header) ? header.join(",") : (header ?? "")).split(",").map((p) => p.trim()).filter(Boolean);
+  const entry = parts[parts.length - hops];
+  return entry !== undefined && entry.length <= 64 ? entry : socket;
+}
+
 /**
- * The HTTP face of the booking core, on node:http only. POST /webhook/messages takes a signed, size-limited, rate-limited JSON
- * body, checks the signature over the raw bytes before parsing anything, and hands each message to the inbound pipeline,
- * which de-duplicates by message id. A failure while processing answers 500 without detail, so the sender retries and the
- * de-duplication makes the retry safe. GET /healthz and GET /readyz are for the platform. Nothing is echoed back from the request.
+ * The HTTP face of the booking core, on node:http only. POST /webhook/messages takes a signed, size-limited JSON body. The order
+ * of the checks matters for availability: the body is read within its limit and the signature is verified FIRST; only then is
+ * the per-address limit applied, to authenticated requests, so unsigned traffic from the proxy's address can never use up the
+ * relay's budget. Failed authentications are counted per address only to turn the answer into 429 and to stop logging; a valid
+ * signature always gets through. Flood protection for unauthenticated traffic belongs to the reverse proxy; this server bounds
+ * the work per request (body size, timeouts). A failure while processing answers 500 without detail, so the sender retries and
+ * the message-id de-duplication makes the retry safe. GET /healthz and GET /readyz are for the platform.
  */
 export function createWebhookServer(options: WebhookServerOptions): http.Server {
   const maxBody = options.maxBodyBytes ?? 64 * 1024;
   const tolerance = options.toleranceMs ?? 5 * 60_000;
-  const limiter = new SlidingWindowLimiter(60_000, options.requestsPerMinute ?? 120, 10_000);
+  const hops = options.trustedProxyHops ?? 0;
+  const authenticated = new SlidingWindowLimiter(60_000, options.requestsPerMinute ?? 600, 10_000);
+  const failures = new SlidingWindowLimiter(60_000, options.failuresPerMinute ?? 30, 10_000);
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error: unknown) => {
@@ -84,19 +106,22 @@ export function createWebhookServer(options: WebhookServerOptions): http.Server 
     }
     if (path !== "/webhook/messages") return reply(res, 404, { error: "not_found" });
     if (req.method !== "POST") return reply(res, 405, { error: "method_not_allowed" }, { allow: "POST" });
-    if (!limiter.hit(req.socket.remoteAddress ?? "unknown", options.clock.now())) return reply(res, 429, { error: "rate_limited" }, { "retry-after": "60" });
     if (!(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return reply(res, 415, { error: "unsupported_media_type" });
     const declared = Number(req.headers["content-length"] ?? 0);
     if (declared > maxBody) return reply(res, 413, { error: "payload_too_large" }, { connection: "close" });
     const body = await readBody(req, maxBody);
     if (body === undefined) return reply(res, 413, { error: "payload_too_large" }, { connection: "close" });
 
+    const address = senderAddress(req, hops);
     const header = req.headers["x-signature"];
     const verdict = verifySignature(typeof header === "string" ? header : undefined, body, options.secrets, options.clock.now(), tolerance);
     if (verdict !== "ok") {
+      if (!failures.hit(address, options.clock.now())) return reply(res, 429, { error: "rate_limited" }, { "retry-after": "60" });
       options.logger.warn("http.signature_refused", { reason: verdict });
       return reply(res, 401, { error: "invalid_signature" });
     }
+    if (!authenticated.hit(address, options.clock.now())) return reply(res, 429, { error: "rate_limited" }, { "retry-after": "60" });
+
     let json: unknown;
     try {
       json = JSON.parse(body.toString("utf8"));
